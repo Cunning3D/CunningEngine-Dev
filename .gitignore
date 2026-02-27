@@ -1,0 +1,18 @@
+# Unity / C#
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Uu]ser[Ss]ettings/
+.vs/
+.vscode/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# CunningEngine native DLL backups (keep the canonical one)
+Assets/Plugins/CunningEngine/Scripts/CAssemblies/**/cunning_core_ffi_b*.dll
+Assets/Plugins/CunningEngine/Scripts/CAssemblies/**/cunning_core_ffi_b*.dll.meta
