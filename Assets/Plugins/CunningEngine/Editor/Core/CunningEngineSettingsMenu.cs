@@ -6,7 +6,7 @@ namespace CunningEngine.Editor {
         [MenuItem("Procedural/Cunning Engine/Settings...", false, 90)]
         static void Open() {
             var w = EditorWindow.GetWindow<CunningEngineSettingsWindow>(true, "Cunning Engine Settings");
-            w.minSize = new Vector2(520, 140);
+            w.minSize = new Vector2(520, 210);
             w.Show();
         }
     }
@@ -28,6 +28,11 @@ namespace CunningEngine.Editor {
 
             if (!string.IsNullOrEmpty(CunningEngineSettings.Cunning3DExePath) && !System.IO.File.Exists(CunningEngineSettings.Cunning3DExePath))
                 EditorGUILayout.HelpBox("Executable path does not exist.", MessageType.Warning);
+
+            EditorGUILayout.Space(10f);
+            EditorGUILayout.LabelField("Scene View", EditorStyles.boldLabel);
+            CunningEngineSettings.SelectionNgonWireframe = EditorGUILayout.Toggle("Enable NGon Wire Overlay", CunningEngineSettings.SelectionNgonWireframe);
+            EditorGUILayout.HelpBox("Enables Cunning SceneView draw modes. Use the SceneView toolbar overlay 'Cunning' to switch Off / Selected / All wire overlay.", MessageType.None);
         }
     }
 }

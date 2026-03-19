@@ -10,6 +10,14 @@ namespace CunningEngine.CDA {
             return v;
         }
 
+        public static bool TryGetTopLevelString(string json, string prop, out string value) {
+            value = null;
+            if (!TryGetTopLevelRaw(json, prop, out var raw)) return false;
+            var i = 0; SkipWs(raw, ref i);
+            if (!TryReadString(raw, ref i, out value)) return false;
+            return true;
+        }
+
         public static bool TryGetTopLevelRaw(string json, string prop, out string raw) {
             raw = null;
             if (string.IsNullOrEmpty(json) || string.IsNullOrEmpty(prop)) return false;
@@ -223,4 +231,3 @@ namespace CunningEngine.CDA {
         }
     }
 }
-

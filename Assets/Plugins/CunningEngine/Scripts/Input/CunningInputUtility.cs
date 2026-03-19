@@ -13,7 +13,9 @@ namespace CunningEngine {
         public static void Ensure() {
             if (_initialized) return;
             _initialized = true;
-            Register(new MeshInputResolver());
+            Register(new PolylineInputResolver());
+            Register(new CunningMeshInputResolver());
+            Register(new UnityMeshInputResolver());
             Register(new SplineInputResolver());
         }
 
@@ -30,6 +32,6 @@ namespace CunningEngine {
             return null;
         }
 
-        public static string GetSupportedTypesHint() => "Supported: GameObject with CunningMesh or SplineContainer.";
+        public static string GetSupportedTypesHint() => "Supported: GameObject with ICunningPolylineSource, CunningMesh, MeshFilter, SkinnedMeshRenderer, or SplineContainer.";
     }
 }

@@ -12,7 +12,7 @@ namespace CunningEngine.Editor {
             } catch (System.Exception e) {
                 Debug.LogError("Failed to init Cunning Engine: " + e.GetType().FullName + " :: " + e.Message);
                 Debug.LogError(e.ToString());
-                Debug.LogError("Did you put 'cunning_core_ffi.dll' in Assets/Plugins/CunningEngine/Plugins/x86_64/?");
+                Debug.LogError("Did you put 'cunning_core_ffi.dll' in Assets/Plugins/CunningEngine/Scripts/CAssemblies/x86_64/?");
             }
         }
 

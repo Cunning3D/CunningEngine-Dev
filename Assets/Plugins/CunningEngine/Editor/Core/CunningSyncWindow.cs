@@ -25,30 +25,41 @@ namespace CunningEngine.Editor {
             EditorGUILayout.Space(8);
             EditorGUILayout.LabelField("Status", EditorStyles.boldLabel);
             EditorGUILayout.LabelField("Enabled", CunningSyncState.Enabled ? "Yes" : "No");
-            EditorGUILayout.LabelField("DB", string.IsNullOrEmpty(CunningSyncState.DbPath) ? "(none)" : CunningSyncState.DbPath);
+            EditorGUILayout.LabelField("Session", string.IsNullOrEmpty(CunningSyncState.SessionName) ? "(none)" : CunningSyncState.SessionName);
+            EditorGUILayout.LabelField("Unity -> C3D", string.IsNullOrEmpty(CunningSyncState.UnityToC3DMapName) ? "(none)" : CunningSyncState.UnityToC3DMapName);
+            EditorGUILayout.LabelField("C3D -> Unity", string.IsNullOrEmpty(CunningSyncState.C3DToUnityMapName) ? "(none)" : CunningSyncState.C3DToUnityMapName);
             EditorGUILayout.LabelField("Cunning3D PID", CunningSyncState.Cunning3DPid > 0 ? CunningSyncState.Cunning3DPid.ToString() : "(none)");
         }
 
         static void StartSync() {
             try {
-                var dir = System.IO.Path.GetFullPath(System.IO.Path.Combine(Application.dataPath, "..", "Library", "CunningEngine", "Sync"));
-                System.IO.Directory.CreateDirectory(dir);
-                var name = "sync_" + DateTime.UtcNow.ToString("yyyyMMdd_HHmmss_fff") + ".redb";
-                var dbPath = System.IO.Path.Combine(dir, name);
-
-                if (!CunningSyncNative.OpenDb(dbPath, true)) { UnityEngine.Debug.LogWarning($"Cunning Sync: open db failed\n  err={CunningSyncNative.LastError}\n  dll={CunningSyncNative.LoadedPath}"); return; }
-
                 if (!CunningEngineSettings.EnsureCunning3DConfigured()) { UnityEngine.Debug.LogWarning("Cunning Sync: Cunning3D not configured."); return; }
 
-                var exe = CunningEngineSettings.Cunning3DExePath;
-                var args = new StringBuilder(256).Append("--bridge-db ").Append('"').Append(dbPath.Replace("\"", "")).Append('"');
-                var p = Process.Start(new ProcessStartInfo { FileName = exe, Arguments = args.ToString(), UseShellExecute = true });
+                var sessionName = "Local\\cunning3d_sync_" + Guid.NewGuid().ToString("N");
+                var unityToC3DMapName = sessionName + ".viewport.unity";
+                var c3dToUnityMapName = sessionName + ".viewport.c3d";
+                CunningSyncSharedMemory.Open(unityToC3DMapName, c3dToUnityMapName);
 
-                CunningSyncState.DbPath = dbPath;
+                var exe = CunningEngineSettings.Cunning3DExePath;
+                var args = new StringBuilder(256)
+                    .Append("--sync-shm-unity ").Append('"').Append(unityToC3DMapName.Replace("\"", "")).Append('"')
+                    .Append(" --sync-shm-c3d ").Append('"').Append(c3dToUnityMapName.Replace("\"", "")).Append('"');
+                var wd = GuessCunning3DWorkingDir(exe);
+                var p = Process.Start(new ProcessStartInfo { FileName = exe, Arguments = args.ToString(), UseShellExecute = true, WorkingDirectory = wd });
+
+                CunningSyncState.SessionName = sessionName;
+                CunningSyncState.UnityToC3DMapName = unityToC3DMapName;
+                CunningSyncState.C3DToUnityMapName = c3dToUnityMapName;
                 CunningSyncState.Cunning3DPid = p != null ? p.Id : 0;
                 CunningSyncState.Enabled = true;
-                UnityEngine.Debug.Log($"Cunning Sync: started (db={dbPath})");
-            } catch (Exception e) { UnityEngine.Debug.LogWarning($"Cunning Sync: start failed: {e.Message}"); }
+                CunningSyncState.ClearLegacyDbState();
+                UnityEngine.Debug.Log($"Cunning Sync: started (shm)\n  session={sessionName}\n  unity_to_c3d={unityToC3DMapName}\n  c3d_to_unity={c3dToUnityMapName}");
+            } catch (Exception e) {
+                CunningSyncSharedMemory.Close();
+                CunningSyncState.Enabled = false;
+                CunningSyncState.ClearConnectionState();
+                UnityEngine.Debug.LogWarning($"Cunning Sync: start failed: {e.Message}");
+            }
         }
 
         static void StopSync() {
@@ -62,11 +73,16 @@ namespace CunningEngine.Editor {
                 CunningSyncState.Cunning3DPid = 0;
             } catch { }
 
+            CunningSyncSharedMemory.Close();
+            CunningSyncState.ClearConnectionState();
+        }
+
+        static string GuessCunning3DWorkingDir(string exePath) {
             try {
-                var db = CunningSyncState.DbPath;
-                CunningSyncState.DbPath = "";
-                if (!string.IsNullOrEmpty(db) && System.IO.File.Exists(db)) System.IO.File.Delete(db);
+                var repo = System.IO.Path.GetFullPath(System.IO.Path.Combine(Application.dataPath, "..", "..", "Cunning3D_1.0"));
+                if (System.IO.Directory.Exists(System.IO.Path.Combine(repo, "assets"))) return repo;
             } catch { }
+            try { return System.IO.Path.GetDirectoryName(exePath); } catch { return null; }
         }
     }
 }

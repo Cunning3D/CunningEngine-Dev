@@ -6,16 +6,22 @@ using UnityEngine;
 using CunningEngine.CDA;
 
 namespace CunningEngine.Editor.CDA {
-    [ScriptedImporter(1, "cda")]
+    [ScriptedImporter(2, "cda")]
     public sealed class CDAImporter : ScriptedImporter {
         public override void OnImportAsset(AssetImportContext ctx) {
             var json = ReadGameEngineChunk(ctx.assetPath);
             var a = ScriptableObject.CreateInstance<CDAAssetObject>();
             a.sourcePath = ctx.assetPath;
             a.sourceJson = json;
+            a.sourceJsonHash = Fnv1a32(json);
             TryParse(json, a);
             ctx.AddObjectToAsset("CDA", a);
             ctx.SetMainObject(a);
+        }
+
+        static uint Fnv1a32(string s) {
+            if (string.IsNullOrEmpty(s)) return 0;
+            unchecked { uint h = 2166136261u; for (int i = 0; i < s.Length; i++) { h ^= s[i]; h *= 16777619u; } return h; }
         }
 
         static string ReadGameEngineChunk(string path) {
@@ -39,6 +45,9 @@ namespace CunningEngine.Editor.CDA {
 
         static void TryParse(string json, CDAAssetObject a) {
             try {
+                if (CdaMiniJson.TryGetTopLevelString(json, "access_mode", out var am) && !string.IsNullOrEmpty(am)) a.access_mode = am;
+                else if (CdaMiniJson.TryGetTopLevelString(json, "exports_mode", out var em) && !string.IsNullOrEmpty(em)) a.access_mode = string.Equals(em, "BlackBox", StringComparison.OrdinalIgnoreCase) ? "BlackBox" : "WhiteBox";
+
                 var ins = CdaMiniJson.GetTopLevelRaw(json, "inputs");
                 var outs = CdaMiniJson.GetTopLevelRaw(json, "outputs");
                 var ps = CdaMiniJson.GetTopLevelRaw(json, "promoted_params");
@@ -87,4 +96,3 @@ namespace CunningEngine.Editor.CDA {
         }
     }
 }
-

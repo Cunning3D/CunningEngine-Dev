@@ -10,7 +10,7 @@ namespace CunningEngine {
         public enum SourceBasis : uint { InternalBevy = 0, Unity = 1 }
         public SourceBasis sourceBasis = SourceBasis.Unity;
         public ulong currentHandle;
-        public ulong CurrentHandle => currentHandle;
+        public ulong CurrentHandle => this ? currentHandle : 0;
         int _lastHash;
 
         void OnEnable() { TryUpload(); }

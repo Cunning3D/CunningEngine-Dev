@@ -1,0 +1,51 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 11d87c4bc9a8b4ac1a5855e314db9013, type: 3}
+  m_Name: Building_SkyScrapper
+  m_EditorClassIdentifier: 
+  buildingStages:
+  - nameOfStage: StageWindows
+    stageWallsPrefabs:
+    - {fileID: 919132149155446097, guid: 79d48a3d8a6ba44bb9b69f8e78432ac7, type: 3}
+    stageSpecialWalls: []
+    stageCornersPrefabs: []
+    specialWallsEach: 2
+    minimumWallsShouldBe: 3
+    proceduralCornersLength: 0.1
+    cornersType: 1
+    stageType: 1
+    connectCornerVertices: 1
+    repeatCount: 17
+    stageIndex: 0
+    lengthOfAllWallsX: 16923.479
+    lengthOfAllCornersX: 0
+    proceduralCornersMat: {fileID: 2100000, guid: bad2cb954e91543518eea5c8f401ee6e,
+      type: 2}
+    proceduralRoofMaterial: {fileID: 0}
+  - nameOfStage: Roof
+    stageWallsPrefabs:
+    - {fileID: 919132149155446097, guid: 2c31507fa75dd4d4087683ccd9734584, type: 3}
+    stageSpecialWalls: []
+    stageCornersPrefabs: []
+    specialWallsEach: 2
+    minimumWallsShouldBe: 3
+    proceduralCornersLength: 0.1
+    cornersType: 0
+    stageType: 2
+    connectCornerVertices: 1
+    repeatCount: 1
+    stageIndex: 0
+    lengthOfAllWallsX: 16239.327
+    lengthOfAllCornersX: 0
+    proceduralCornersMat: {fileID: 2100000, guid: d4d16a3331e4a4813bf5432bc7674577,
+      type: 2}
+    proceduralRoofMaterial: {fileID: 0}

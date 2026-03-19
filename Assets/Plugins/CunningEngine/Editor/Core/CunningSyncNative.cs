@@ -1,115 +1,112 @@
 using System;
-using System.IO;
-using System.Runtime.InteropServices;
+using System.IO.MemoryMappedFiles;
 using UnityEngine;
 
 namespace CunningEngine.Editor {
-    static class CunningSyncNative {
-        [DllImport("kernel32", CharSet = CharSet.Unicode, SetLastError = true)]
-        static extern IntPtr LoadLibraryW(string lpFileName);
+    static class CunningSyncSharedMemory {
+        const uint Version = 1;
+        const long SeqOffset = 4;
+        const long ByteLengthOffset = 8;
+        const long PayloadOffset = 16;
 
-        [DllImport("kernel32", SetLastError = true)]
-        static extern IntPtr GetProcAddress(IntPtr hModule, string procName);
+        sealed class Channel : IDisposable {
+            public uint lastReadSeq;
+            public uint localWriteSeq;
+            public MemoryMappedFile mapping;
+            public MemoryMappedViewAccessor view;
 
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate void FnInit();
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate uint FnBridgeOpen(IntPtr path, uint create);
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate ulong FnStateGetLatest(IntPtr keyPtr, uint keyLen);
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate ulong FnStatePutLatest(IntPtr keyPtr, uint keyLen, IntPtr ptr, uint len);
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate uint FnBridgeGetBlobSize(ulong blobId);
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate uint FnBridgeCopyBlob(ulong blobId, IntPtr outPtr, uint outCap);
+            public bool TryWrite(byte[] payload) {
+                if (view == null || payload == null || payload.Length < PayloadSize) return false;
+                var seq = unchecked(localWriteSeq + 1u);
+                if (seq == 0u) seq = 1u;
+                localWriteSeq = seq;
+                view.Write(0, Version);
+                view.Write(ByteLengthOffset, (uint)PayloadSize);
+                view.Write(12, 0u);
+                view.WriteArray(PayloadOffset, payload, 0, PayloadSize);
+                view.Write(SeqOffset, seq);
+                return true;
+            }
 
-        static IntPtr _lib;
-        static FnInit _init;
-        static FnBridgeOpen _bridgeOpen;
-        static FnStateGetLatest _getLatest;
-        static FnStatePutLatest _putLatest;
-        static FnBridgeGetBlobSize _getBlobSize;
-        static FnBridgeCopyBlob _copyBlob;
-        static bool _tried;
-        static string _loadedPath;
-        static string _lastError;
+            public bool TryRead(byte[] payload) {
+                if (view == null || payload == null || payload.Length < PayloadSize) return false;
+                var seqBefore = view.ReadUInt32(SeqOffset);
+                if (seqBefore == 0u || seqBefore == lastReadSeq) return false;
+                var version = view.ReadUInt32(0);
+                var byteLength = view.ReadUInt32(ByteLengthOffset);
+                if (version != Version || byteLength < PayloadSize) return false;
+                view.ReadArray(PayloadOffset, payload, 0, PayloadSize);
+                var seqAfter = view.ReadUInt32(SeqOffset);
+                if (seqAfter != seqBefore) return false;
+                lastReadSeq = seqAfter;
+                return true;
+            }
 
-        public static string LoadedPath => _loadedPath;
-        public static string LastError => _lastError;
-
-        static string DllDir => Path.Combine(Application.dataPath, "Plugins", "CunningEngine", "Scripts", "CAssemblies", "x86_64");
-        static string NewDll => Path.Combine(DllDir, "cunning_core_ffi.NEW.dll");
-        static string MainDll => Path.Combine(DllDir, "cunning_core_ffi.dll");
-        static string CacheDir => Path.GetFullPath(Path.Combine(Application.dataPath, "..", "Library", "CunningEngine", "DllCache"));
-
-        static T GetFn<T>(string name) where T : class {
-            var p = GetProcAddress(_lib, name);
-            return p == IntPtr.Zero ? null : Marshal.GetDelegateForFunctionPointer(p, typeof(T)) as T;
+            public void Dispose() {
+                try { view?.Dispose(); } catch { }
+                try { mapping?.Dispose(); } catch { }
+                view = null;
+                mapping = null;
+            }
         }
 
-        static string CopyToUniqueLoadPath(string src) {
-            Directory.CreateDirectory(CacheDir);
+        public const int PayloadSize = 64;
+        public const int PacketSize = 80;
+
+        static Channel _unityToC3D;
+        static Channel _c3dToUnity;
+
+        public static bool IsReady {
+            get {
+                EnsureReadyFromState();
+                return _unityToC3D != null && _c3dToUnity != null;
+            }
+        }
+
+        public static void Open(string unityToC3DMapName, string c3dToUnityMapName) {
+            Close();
+            _unityToC3D = OpenChannel(unityToC3DMapName);
+            _c3dToUnity = OpenChannel(c3dToUnityMapName);
+        }
+
+        public static void Close() {
+            try { _unityToC3D?.Dispose(); } catch { }
+            try { _c3dToUnity?.Dispose(); } catch { }
+            _unityToC3D = null;
+            _c3dToUnity = null;
+        }
+
+        public static bool TryWriteUnityViewport(byte[] payload) {
+            EnsureReadyFromState();
+            return _unityToC3D != null && _unityToC3D.TryWrite(payload);
+        }
+
+        public static bool TryReadC3DViewport(byte[] payload) {
+            EnsureReadyFromState();
+            return _c3dToUnity != null && _c3dToUnity.TryRead(payload);
+        }
+
+        public static void EnsureReadyFromState() {
+            if (_unityToC3D != null && _c3dToUnity != null) return;
+            if (!CunningSyncState.Enabled) return;
+            if (string.IsNullOrEmpty(CunningSyncState.UnityToC3DMapName) || string.IsNullOrEmpty(CunningSyncState.C3DToUnityMapName)) return;
+
             try {
-                foreach (var f in Directory.GetFiles(CacheDir, "cunning_core_ffi.load.*.dll")) {
-                    try { var fi = new FileInfo(f); if (fi.Exists && fi.CreationTimeUtc < DateTime.UtcNow.AddHours(-6)) fi.Delete(); } catch { }
-                }
-            } catch { }
-            var dst = Path.Combine(CacheDir, "cunning_core_ffi.load." + DateTime.UtcNow.ToString("yyyyMMdd_HHmmss_fff") + ".dll");
-            File.Copy(src, dst, true);
-            return dst;
+                Open(CunningSyncState.UnityToC3DMapName, CunningSyncState.C3DToUnityMapName);
+            } catch (Exception e) {
+                Close();
+                Debug.LogWarning($"Cunning Sync: shared memory attach failed: {e.Message}");
+            }
         }
 
-        public static bool EnsureLoaded() {
-            if (_tried) return _lib != IntPtr.Zero && _bridgeOpen != null;
-            _tried = true;
-            _lastError = "";
-            _loadedPath = "";
-            var src = File.Exists(NewDll) ? NewDll : MainDll;
-            if (!File.Exists(src)) { _lastError = "DLL not found: " + src; return false; }
-            var path = src;
-            try { path = CopyToUniqueLoadPath(src); }
-            catch (Exception e) { _lastError = "DLL copy failed: " + e.Message + " (src=" + src + ")"; return false; }
-            _lib = LoadLibraryW(path);
-            if (_lib == IntPtr.Zero) { _lastError = "LoadLibrary failed: " + path + " (win32=" + Marshal.GetLastWin32Error() + ")"; return false; }
-            _loadedPath = path;
-
-            _init = GetFn<FnInit>("cunning_init");
-            _bridgeOpen = GetFn<FnBridgeOpen>("cunning_bridge_open");
-            _getLatest = GetFn<FnStateGetLatest>("cunning_state_get_latest");
-            _putLatest = GetFn<FnStatePutLatest>("cunning_state_put_latest");
-            _getBlobSize = GetFn<FnBridgeGetBlobSize>("cunning_bridge_get_blob_size");
-            _copyBlob = GetFn<FnBridgeCopyBlob>("cunning_bridge_copy_blob");
-
-            var miss = "";
-            if (_init == null) miss += "cunning_init ";
-            if (_bridgeOpen == null) miss += "cunning_bridge_open ";
-            if (_getLatest == null) miss += "cunning_state_get_latest ";
-            if (_putLatest == null) miss += "cunning_state_put_latest ";
-            if (_getBlobSize == null) miss += "cunning_bridge_get_blob_size ";
-            if (_copyBlob == null) miss += "cunning_bridge_copy_blob ";
-            if (!string.IsNullOrEmpty(miss)) { _lastError = "Missing exports: " + miss.Trim() + " (dll=" + path + ")"; return false; }
-            return true;
+        static Channel OpenChannel(string mapName) {
+            if (string.IsNullOrWhiteSpace(mapName)) throw new ArgumentException("Shared memory name is empty.", nameof(mapName));
+            var mapping = MemoryMappedFile.CreateOrOpen(mapName, PacketSize, MemoryMappedFileAccess.ReadWrite);
+            var view = mapping.CreateViewAccessor(0, PacketSize, MemoryMappedFileAccess.ReadWrite);
+            return new Channel {
+                mapping = mapping,
+                view = view
+            };
         }
-
-        public static bool OpenDb(string absPath, bool create) {
-            if (!EnsureLoaded()) return false;
-            if (_init != null) _init();
-            var p = Marshal.StringToHGlobalAnsi(absPath ?? "");
-            try { return _bridgeOpen(p, create ? 1u : 0u) != 0; }
-            finally { Marshal.FreeHGlobal(p); }
-        }
-
-        public static ulong GetLatest(byte[] keyUtf8) {
-            if (!EnsureLoaded() || _getLatest == null || keyUtf8 == null || keyUtf8.Length == 0) return 0;
-            var gch = GCHandle.Alloc(keyUtf8, GCHandleType.Pinned);
-            try { return _getLatest(gch.AddrOfPinnedObject(), (uint)keyUtf8.Length); }
-            finally { gch.Free(); }
-        }
-
-        public static ulong PutLatest(byte[] keyUtf8, IntPtr ptr, uint len) {
-            if (!EnsureLoaded() || _putLatest == null || keyUtf8 == null || keyUtf8.Length == 0 || ptr == IntPtr.Zero || len == 0) return 0;
-            var gch = GCHandle.Alloc(keyUtf8, GCHandleType.Pinned);
-            try { return _putLatest(gch.AddrOfPinnedObject(), (uint)keyUtf8.Length, ptr, len); }
-            finally { gch.Free(); }
-        }
-
-        public static uint GetBlobSize(ulong blobId) => (!EnsureLoaded() || _getBlobSize == null) ? 0 : _getBlobSize(blobId);
-        public static uint CopyBlob(ulong blobId, IntPtr outPtr, uint outCap) => (!EnsureLoaded() || _copyBlob == null) ? 0 : _copyBlob(blobId, outPtr, outCap);
     }
 }
-

@@ -1,6 +1,5 @@
 using UnityEngine;
 using System;
-using System.Runtime.InteropServices;
 #if UNITY_EDITOR
 using UnityEditor;
 #endif
@@ -10,12 +9,24 @@ namespace CunningEngine {
     public class CunningMesh : MonoBehaviour, ICunningInputHandle {
         public ulong currentHandle = 0; // Public for debug inspection
         public ulong CurrentHandle => currentHandle;
+        [HideInInspector] public bool ownsHandle = true; // if false, host manages handle lifetime
         public enum DisplayMode { Solid, SolidAndWire, Wire }
         [HideInInspector] public DisplayMode displayMode = DisplayMode.Solid;
         [HideInInspector] public bool solidUnlit = false;
         [HideInInspector] public Color wireframeColor = Color.cyan;
+        [HideInInspector] public bool preserveExistingSolidMaterial = true;
+        [HideInInspector] public Material solidMaterialOverride;
+        [HideInInspector] public Material[] solidMaterialOverrides = Array.Empty<Material>();
+#if UNITY_EDITOR
+        [NonSerialized] bool editorSelectionHighlightActive;
+        [NonSerialized] Color editorSelectionWireColor = Color.white;
+#endif
+        ulong lastUploadedDirtyId;
         Mesh mesh;
-        int[] tri = Array.Empty<int>(), lines = Array.Empty<int>();
+        readonly CunningNativeMeshBuilder.MeshRuntimeCache meshRuntimeCache = new CunningNativeMeshBuilder.MeshRuntimeCache();
+        int[][] solidSubmeshTriangles = Array.Empty<int[]>();
+        int[] solidMaterialSlots = Array.Empty<int>();
+        int[] lines = Array.Empty<int>();
         public int[] LineIndices => lines; // editor wire draw
         static Material s_defMat;
         static bool s_triedDefMat;
@@ -30,11 +41,45 @@ namespace CunningEngine {
             return s_defMat;
         }
 
+        void OnEnable() {
+            if (TryRestoreBuiltinDemoShape()) return;
+            if (currentHandle != 0) UpdateMesh();
+        }
+
+        bool TryRestoreBuiltinDemoShape() {
+#if UNITY_EDITOR
+            if (Application.isPlaying) return false;
+            if (GetComponent<CunningDemoShape>() != null) return false;
+
+            CunningDemoShape.ShapeKind? kind = null;
+            if (gameObject.name == "Cunning_Box") kind = CunningDemoShape.ShapeKind.Cube;
+            else if (gameObject.name == "Cunning_Sphere") kind = CunningDemoShape.ShapeKind.Sphere;
+            else if (gameObject.name == "Cunning_Pentagon") kind = CunningDemoShape.ShapeKind.Pentagon;
+            if (!kind.HasValue) return false;
+
+            var demo = gameObject.AddComponent<CunningDemoShape>();
+            demo.kind = kind.Value;
+            EditorUtility.SetDirty(gameObject);
+            demo.Rebuild();
+            return true;
+#else
+            return false;
+#endif
+        }
+
         public void LoadFromHandle(ulong handle) {
-            if (currentHandle != 0 && currentHandle != handle) {
+            if (ownsHandle && currentHandle != 0 && currentHandle != handle) {
                 NativeMethods.cunning_release_handle(currentHandle);
             }
+            if (currentHandle != handle) {
+                lastUploadedDirtyId = 0;
+                meshRuntimeCache.Reset();
+            }
             currentHandle = handle;
+            if (currentHandle == 0) {
+                ClearMeshContents();
+                return;
+            }
             UpdateMesh();
         }
 
@@ -42,101 +87,200 @@ namespace CunningEngine {
             var r = GetComponent<MeshRenderer>(); if (r == null) return;
             var lit = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("HDRP/Lit") ?? Shader.Find("Standard");
             var unlit = Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("HDRP/Unlit") ?? Shader.Find("Unlit/Color");
-            var wire = Shader.Find("Hidden/Internal-Colored") ?? unlit;
-            var solidShader = solidUnlit ? unlit : lit;
-            var m0 = (r.sharedMaterials != null && r.sharedMaterials.Length > 0 && r.sharedMaterials[0] != null && r.sharedMaterials[0].shader == solidShader)
-                ? r.sharedMaterials[0]
-                : new Material(solidShader);
-            var m1 = (r.sharedMaterials != null && r.sharedMaterials.Length > 1 && r.sharedMaterials[1] != null && r.sharedMaterials[1].shader == wire)
-                ? r.sharedMaterials[1]
-                : new Material(wire);
+            var wire = unlit ?? Shader.Find("Hidden/Internal-Colored") ?? Shader.Find("Unlit/Color");
+            var solidShader = EffectiveSolidUnlit ? unlit : lit;
             var def = TryGetDefaultMat();
-            var solidColor = def != null ? def.color : new Color(0.78f, 0.78f, 0.78f, 1f);
-            m0.color = solidColor;
-            if (m0.HasProperty("_BaseColor")) m0.SetColor("_BaseColor", solidColor);
-            if (m0.HasProperty("_Color")) m0.SetColor("_Color", solidColor);
-            if (m0.HasProperty("_Metallic")) m0.SetFloat("_Metallic", (def != null && def.HasProperty("_Metallic")) ? def.GetFloat("_Metallic") : 0f);
-            if (m0.HasProperty("_Smoothness")) m0.SetFloat("_Smoothness", (def != null && def.HasProperty("_Smoothness")) ? def.GetFloat("_Smoothness") : 0.1f);
-            if (m1.HasProperty("_SrcBlend")) m1.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
-            if (m1.HasProperty("_DstBlend")) m1.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
-            if (m1.HasProperty("_Cull")) m1.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Off);
-            if (m1.HasProperty("_ZWrite")) m1.SetInt("_ZWrite", 0);
-            if (m1.HasProperty("_ZTest")) m1.SetInt("_ZTest", (int)UnityEngine.Rendering.CompareFunction.Always);
-            m1.color = wireframeColor;
-            if (m1.HasProperty("_BaseColor")) m1.SetColor("_BaseColor", wireframeColor);
-            if (m1.HasProperty("_Color")) m1.SetColor("_Color", wireframeColor);
-            m1.renderQueue = 4000; // overlay
-            r.sharedMaterials = displayMode == DisplayMode.Wire ? new Material[] { m1, m1 } : (displayMode == DisplayMode.Solid ? new Material[] { m0, m0 } : new Material[] { m0, m1 });
+            int solidSubmeshCount = Mathf.Max(1, solidSubmeshTriangles != null ? solidSubmeshTriangles.Length : 0);
+            bool showWire = EffectiveDisplayMode != DisplayMode.Solid;
+            var materials = new Material[solidSubmeshCount + (showWire ? 1 : 0)];
+
+            for (int submeshIndex = 0; submeshIndex < solidSubmeshCount; submeshIndex++) {
+                var existingSolid = (r.sharedMaterials != null && r.sharedMaterials.Length > submeshIndex) ? r.sharedMaterials[submeshIndex] : null;
+                Material overrideMaterial = ResolveSolidMaterialOverride(submeshIndex);
+                bool useProvidedSolidMaterial = overrideMaterial != null || (preserveExistingSolidMaterial && existingSolid != null);
+                var solidMaterial = overrideMaterial != null
+                    ? overrideMaterial
+                    : ((preserveExistingSolidMaterial && existingSolid != null)
+                        ? existingSolid
+                        : ((existingSolid != null && existingSolid.shader == solidShader) ? existingSolid : new Material(solidShader)));
+
+                if (!useProvidedSolidMaterial) {
+                    var solidColor = def != null ? def.color : new Color(0.78f, 0.78f, 0.78f, 1f);
+                    solidMaterial.color = solidColor;
+                    if (solidMaterial.HasProperty("_BaseColor")) solidMaterial.SetColor("_BaseColor", solidColor);
+                    if (solidMaterial.HasProperty("_Color")) solidMaterial.SetColor("_Color", solidColor);
+                    if (solidMaterial.HasProperty("_Metallic")) solidMaterial.SetFloat("_Metallic", (def != null && def.HasProperty("_Metallic")) ? def.GetFloat("_Metallic") : 0f);
+                    if (solidMaterial.HasProperty("_Smoothness")) solidMaterial.SetFloat("_Smoothness", (def != null && def.HasProperty("_Smoothness")) ? def.GetFloat("_Smoothness") : 0.1f);
+                }
+
+                materials[submeshIndex] = solidMaterial;
+            }
+
+            if (showWire) {
+                var wireMaterial = (r.sharedMaterials != null && r.sharedMaterials.Length > solidSubmeshCount && r.sharedMaterials[solidSubmeshCount] != null && r.sharedMaterials[solidSubmeshCount].shader == wire)
+                    ? r.sharedMaterials[solidSubmeshCount]
+                    : new Material(wire);
+                if (wireMaterial.HasProperty("_Surface")) wireMaterial.SetFloat("_Surface", 1f);
+                if (wireMaterial.HasProperty("_Blend")) wireMaterial.SetFloat("_Blend", 0f);
+                if (wireMaterial.HasProperty("_SrcBlend")) wireMaterial.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+                if (wireMaterial.HasProperty("_DstBlend")) wireMaterial.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+                if (wireMaterial.HasProperty("_Cull")) wireMaterial.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Off);
+                if (wireMaterial.HasProperty("_ZWrite")) wireMaterial.SetInt("_ZWrite", 0);
+                if (wireMaterial.HasProperty("_ZTest")) wireMaterial.SetInt("_ZTest", (int)UnityEngine.Rendering.CompareFunction.LessEqual);
+                if (wireMaterial.IsKeywordEnabled("_SURFACE_TYPE_TRANSPARENT") == false) wireMaterial.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+                wireMaterial.color = EffectiveWireframeColor;
+                if (wireMaterial.HasProperty("_BaseColor")) wireMaterial.SetColor("_BaseColor", EffectiveWireframeColor);
+                if (wireMaterial.HasProperty("_Color")) wireMaterial.SetColor("_Color", EffectiveWireframeColor);
+                wireMaterial.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+                materials[solidSubmeshCount] = wireMaterial;
+            }
+
+            r.sharedMaterials = materials;
         }
 
         public void ApplyDisplayMode() {
             if (mesh == null) mesh = GetComponent<MeshFilter>()?.sharedMesh;
             if (mesh == null) return;
-            mesh.subMeshCount = 2;
-            mesh.SetIndices(displayMode == DisplayMode.Wire ? Array.Empty<int>() : tri, MeshTopology.Triangles, 0);
-            mesh.SetIndices(displayMode == DisplayMode.Solid ? Array.Empty<int>() : lines, MeshTopology.Lines, 1);
+            DisplayMode effectiveDisplayMode = EffectiveDisplayMode;
+            int solidSubmeshCount = Mathf.Max(1, solidSubmeshTriangles != null ? solidSubmeshTriangles.Length : 0);
+            bool showWire = effectiveDisplayMode != DisplayMode.Solid;
+            mesh.subMeshCount = solidSubmeshCount + (showWire ? 1 : 0);
+            for (int submeshIndex = 0; submeshIndex < solidSubmeshCount; submeshIndex++) {
+                var indices = (effectiveDisplayMode == DisplayMode.Wire || solidSubmeshTriangles == null || submeshIndex >= solidSubmeshTriangles.Length)
+                    ? Array.Empty<int>()
+                    : solidSubmeshTriangles[submeshIndex] ?? Array.Empty<int>();
+                mesh.SetIndices(indices, MeshTopology.Triangles, submeshIndex);
+            }
+
+            if (showWire) {
+                mesh.SetIndices(lines ?? Array.Empty<int>(), MeshTopology.Lines, solidSubmeshCount);
+            }
             ApplyMaterials();
         }
 
         private void UpdateMesh() {
-            if (currentHandle == 0) return;
-
-            int vCount = (int)NativeMethods.cunning_geo_get_vertex_count(currentHandle);
-            int iCount = (int)NativeMethods.cunning_geo_copy_indices(currentHandle, IntPtr.Zero);
-            int lCount = (int)NativeMethods.cunning_geo_copy_lines(currentHandle, IntPtr.Zero);
-
-            if (vCount == 0) {
-                Debug.LogWarning("CunningMesh: 0 vertices received.");
+            if (currentHandle == 0) {
+                ClearMeshContents();
+                return;
+            }
+            if (mesh == null) mesh = GetComponent<MeshFilter>()?.sharedMesh;
+            var dirtyId = NativeMethods.cunning_geo_get_dirty_id(currentHandle);
+            if (mesh != null && dirtyId != 0 && dirtyId == lastUploadedDirtyId) {
+                ApplyDisplayMode();
+                return;
+            }
+            if ((int)NativeMethods.cunning_geo_get_vertex_count(currentHandle) == 0) {
+                ClearMeshContents();
                 return;
             }
 
-            Vector3[] vertices = new Vector3[vCount];
-            int[] indices = new int[iCount];
-            int[] lns = new int[lCount];
-
-            GCHandle hV = GCHandle.Alloc(vertices, GCHandleType.Pinned);
-            GCHandle hI = GCHandle.Alloc(indices, GCHandleType.Pinned);
-            GCHandle hL = GCHandle.Alloc(lns, GCHandleType.Pinned);
-
-            try {
-                NativeMethods.cunning_geo_copy_vertices(currentHandle, hV.AddrOfPinnedObject());
-                if (iCount > 0) {
-                    NativeMethods.cunning_geo_copy_indices(currentHandle, hI.AddrOfPinnedObject());
-                }
-                if (lCount > 0) {
-                    NativeMethods.cunning_geo_copy_lines(currentHandle, hL.AddrOfPinnedObject());
-                }
-            } finally {
-                hV.Free();
-                hI.Free();
-                hL.Free();
+            if (mesh == null) {
+                mesh = new Mesh();
+                mesh.MarkDynamic();
+            }
+            if (!CunningNativeMeshBuilder.TryFillMeshFromHandle(
+                currentHandle,
+                mesh,
+                "CunningMesh_" + currentHandle,
+                includeLines: true,
+                runtimeCache: meshRuntimeCache,
+                out var buildData
+            )) {
+                Debug.LogWarning("CunningMesh: failed to build mesh from native handle.");
+                ClearMeshContents();
+                return;
             }
 
-            if (mesh == null) mesh = new Mesh();
-            else mesh.Clear();
-            mesh.name = "CunningMesh_" + currentHandle;
-            if (vCount > 65000) mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
-            
-            mesh.vertices = vertices;
-            tri = indices;
-            lines = lns;
-            var hasTris = tri.Length >= 3 && (tri.Length % 3) == 0;
-            mesh.subMeshCount = 1;
-            mesh.SetTriangles(hasTris ? tri : Array.Empty<int>(), 0, true);
-            if (hasTris) mesh.RecalculateNormals(); // avoid Unity warning: submesh lines/points
-            mesh.subMeshCount = 2;
-            mesh.SetIndices((lines.Length >= 2 && (lines.Length % 2) == 0) ? lines : Array.Empty<int>(), MeshTopology.Lines, 1);
-            mesh.RecalculateBounds();
+            solidSubmeshTriangles = buildData.solidSubmeshIndices ?? Array.Empty<int[]>();
+            solidMaterialSlots = buildData.solidMaterialSlots ?? Array.Empty<int>();
+            lines = buildData.lines ?? Array.Empty<int>();
 
-            GetComponent<MeshFilter>().mesh = mesh;
+            GetComponent<MeshFilter>().sharedMesh = mesh;
+            lastUploadedDirtyId = dirtyId != 0 ? dirtyId : NativeMethods.cunning_geo_get_dirty_id(currentHandle);
             ApplyDisplayMode();
         }
 
+        void ClearMeshContents() {
+            solidSubmeshTriangles = Array.Empty<int[]>();
+            solidMaterialSlots = Array.Empty<int>();
+            lines = Array.Empty<int>();
+            lastUploadedDirtyId = 0;
+            meshRuntimeCache.Reset();
+
+            if (mesh != null) {
+                mesh.Clear();
+            }
+
+            var meshFilter = GetComponent<MeshFilter>();
+            if (meshFilter != null) {
+                meshFilter.sharedMesh = null;
+            }
+        }
+
+        Material ResolveSolidMaterialOverride(int submeshIndex) {
+            if (solidMaterialOverrides != null && solidMaterialOverrides.Length > 0) {
+                if (solidMaterialSlots != null && solidMaterialSlots.Length > submeshIndex) {
+                    int materialSlot = solidMaterialSlots[submeshIndex];
+                    if (materialSlot >= 0 && materialSlot < solidMaterialOverrides.Length && solidMaterialOverrides[materialSlot] != null) {
+                        return solidMaterialOverrides[materialSlot];
+                    }
+                }
+
+                if (submeshIndex < solidMaterialOverrides.Length && solidMaterialOverrides[submeshIndex] != null) {
+                    return solidMaterialOverrides[submeshIndex];
+                }
+            }
+
+            if (submeshIndex == 0) {
+                return solidMaterialOverride;
+            }
+
+            return null;
+        }
+
+        DisplayMode EffectiveDisplayMode {
+            get {
+#if UNITY_EDITOR
+                if (editorSelectionHighlightActive && displayMode == DisplayMode.Solid) {
+                    return DisplayMode.SolidAndWire;
+                }
+#endif
+                return displayMode;
+            }
+        }
+
+        bool EffectiveSolidUnlit => solidUnlit;
+
+        Color EffectiveWireframeColor {
+            get {
+#if UNITY_EDITOR
+                if (editorSelectionHighlightActive) {
+                    return editorSelectionWireColor;
+                }
+#endif
+                return wireframeColor;
+            }
+        }
+
+#if UNITY_EDITOR
+        public void SetEditorSelectionHighlight(bool active, Color wireColor) {
+            if (editorSelectionHighlightActive == active && editorSelectionWireColor.Equals(wireColor)) {
+                return;
+            }
+
+            editorSelectionHighlightActive = active;
+            editorSelectionWireColor = wireColor;
+            ApplyDisplayMode();
+        }
+#endif
+
         void OnDestroy() {
-            if (currentHandle != 0) {
+            if (ownsHandle && currentHandle != 0) {
                 NativeMethods.cunning_release_handle(currentHandle);
                 currentHandle = 0;
             }
+            lastUploadedDirtyId = 0;
+            meshRuntimeCache.Reset();
         }
     }
 }

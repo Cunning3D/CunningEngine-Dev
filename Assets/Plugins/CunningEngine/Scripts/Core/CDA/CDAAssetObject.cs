@@ -19,8 +19,13 @@ namespace CunningEngine.CDA {
     public sealed class CDAAssetObject : ScriptableObject {
         [HideInInspector] public string sourcePath;
         [HideInInspector] public string sourceJson;
+        [HideInInspector] public uint sourceJsonHash;
+        [HideInInspector] public string access_mode = "WhiteBox";
         public List<CdaPort> inputs = new(), outputs = new();
         public List<CdaPromotedParam> promoted_params = new();
+
+        public bool IsBlackBox() {
+            return string.Equals(access_mode, "BlackBox", StringComparison.OrdinalIgnoreCase);
+        }
     }
 }
-

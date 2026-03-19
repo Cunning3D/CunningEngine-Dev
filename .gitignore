@@ -16,3 +16,13 @@ Thumbs.db
 # CunningEngine native DLL backups (keep the canonical one)
 Assets/Plugins/CunningEngine/Scripts/CAssemblies/**/cunning_core_ffi_b*.dll
 Assets/Plugins/CunningEngine/Scripts/CAssemblies/**/cunning_core_ffi_b*.dll.meta
+
+# CunningEngine transient native artifacts
+Assets/Plugins/CunningEngine/Scripts/CAssemblies/**/cunning_core_ffi.dll.new
+Assets/Plugins/CunningEngine/Scripts/CAssemblies/**/cunning_core_ffi.dll.new.meta
+Assets/Plugins/CunningEngine/Scripts/CAssemblies/**/*.pdb
+Assets/Plugins/CunningEngine/Scripts/CAssemblies/**/*.pdb.meta
+
+# Showcase packaging leftovers
+Assets/Plugins/CunningEngine/Scripts/Showcases/ProceduralRoad/*.rar
+Assets/Plugins/CunningEngine/Scripts/Showcases/ProceduralRoad/*.rar.meta

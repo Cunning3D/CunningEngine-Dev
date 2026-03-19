@@ -1,0 +1,130 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 11d87c4bc9a8b4ac1a5855e314db9013, type: 3}
+  m_Name: Building_3
+  m_EditorClassIdentifier: 
+  buildingStages:
+  - nameOfStage: FirstStage
+    stageWallsPrefabs:
+    - {fileID: 919132149155446097, guid: 8bdb1086ea18f49bbab789da186ee80a, type: 3}
+    stageSpecialWalls:
+    - {fileID: 919132149155446097, guid: 08164b589d3bf4298a0a2f27e9b0c8e0, type: 3}
+    stageCornersPrefabs: []
+    specialWallsEach: 2
+    minimumWallsShouldBe: 5
+    proceduralCornersLength: 0.1
+    cornersType: 1
+    stageType: 1
+    connectCornerVertices: 1
+    repeatCount: 1
+    stageIndex: 0
+    lengthOfAllWallsX: 3590.933
+    lengthOfAllCornersX: 0
+    proceduralCornersMat: {fileID: 2100000, guid: def30e7520c734007b45386000b49bd6,
+      type: 2}
+    proceduralRoofMaterial: {fileID: 2100000, guid: def30e7520c734007b45386000b49bd6,
+      type: 2}
+  - nameOfStage: Roof
+    stageWallsPrefabs:
+    - {fileID: 919132149155446097, guid: 2c31507fa75dd4d4087683ccd9734584, type: 3}
+    stageSpecialWalls: []
+    stageCornersPrefabs: []
+    specialWallsEach: 0
+    minimumWallsShouldBe: 0
+    proceduralCornersLength: 0.1
+    cornersType: 0
+    stageType: 2
+    connectCornerVertices: 1
+    repeatCount: 1
+    stageIndex: 0
+    lengthOfAllWallsX: 2086.2869
+    lengthOfAllCornersX: 0
+    proceduralCornersMat: {fileID: 2100000, guid: def30e7520c734007b45386000b49bd6,
+      type: 2}
+    proceduralRoofMaterial: {fileID: 2100000, guid: def30e7520c734007b45386000b49bd6,
+      type: 2}
+  - nameOfStage: Windows
+    stageWallsPrefabs:
+    - {fileID: 919132149155446097, guid: d62cfa10574854a249c57ca4265b2466, type: 3}
+    stageSpecialWalls: []
+    stageCornersPrefabs: []
+    specialWallsEach: 0
+    minimumWallsShouldBe: 0
+    proceduralCornersLength: 0.1
+    cornersType: 0
+    stageType: 0
+    connectCornerVertices: 0
+    repeatCount: 3
+    stageIndex: 0
+    lengthOfAllWallsX: 3171.1836
+    lengthOfAllCornersX: 0
+    proceduralCornersMat: {fileID: 2100000, guid: def30e7520c734007b45386000b49bd6,
+      type: 2}
+    proceduralRoofMaterial: {fileID: 2100000, guid: def30e7520c734007b45386000b49bd6,
+      type: 2}
+  - nameOfStage: Roof
+    stageWallsPrefabs:
+    - {fileID: 919132149155446097, guid: 2c31507fa75dd4d4087683ccd9734584, type: 3}
+    stageSpecialWalls: []
+    stageCornersPrefabs: []
+    specialWallsEach: 0
+    minimumWallsShouldBe: 0
+    proceduralCornersLength: 0.1
+    cornersType: 0
+    stageType: 2
+    connectCornerVertices: 1
+    repeatCount: 1
+    stageIndex: 0
+    lengthOfAllWallsX: 2086.2869
+    lengthOfAllCornersX: 0
+    proceduralCornersMat: {fileID: 2100000, guid: def30e7520c734007b45386000b49bd6,
+      type: 2}
+    proceduralRoofMaterial: {fileID: 2100000, guid: def30e7520c734007b45386000b49bd6,
+      type: 2}
+  - nameOfStage: Windows
+    stageWallsPrefabs:
+    - {fileID: 919132149155446097, guid: 9e7c9a661ee804a269cae967acabda82, type: 3}
+    stageSpecialWalls: []
+    stageCornersPrefabs: []
+    specialWallsEach: 0
+    minimumWallsShouldBe: 0
+    proceduralCornersLength: 0.1
+    cornersType: 0
+    stageType: 0
+    connectCornerVertices: 0
+    repeatCount: 1
+    stageIndex: 0
+    lengthOfAllWallsX: 2467.1443
+    lengthOfAllCornersX: 0
+    proceduralCornersMat: {fileID: 2100000, guid: def30e7520c734007b45386000b49bd6,
+      type: 2}
+    proceduralRoofMaterial: {fileID: 2100000, guid: def30e7520c734007b45386000b49bd6,
+      type: 2}
+  - nameOfStage: Roof
+    stageWallsPrefabs:
+    - {fileID: 919132149155446097, guid: 2c31507fa75dd4d4087683ccd9734584, type: 3}
+    stageSpecialWalls: []
+    stageCornersPrefabs: []
+    specialWallsEach: 0
+    minimumWallsShouldBe: 0
+    proceduralCornersLength: 0.1
+    cornersType: 0
+    stageType: 2
+    connectCornerVertices: 1
+    repeatCount: 1
+    stageIndex: 0
+    lengthOfAllWallsX: 2086.2869
+    lengthOfAllCornersX: 0
+    proceduralCornersMat: {fileID: 2100000, guid: def30e7520c734007b45386000b49bd6,
+      type: 2}
+    proceduralRoofMaterial: {fileID: 2100000, guid: def30e7520c734007b45386000b49bd6,
+      type: 2}

@@ -1,23 +1,19 @@
 using System;
-using System.Runtime.InteropServices;
 using UnityEditor;
 using UnityEngine;
 
 namespace CunningEngine.Editor {
     [InitializeOnLoad]
     static class CunningViewportSync {
-        static readonly byte[] KUnity = System.Text.Encoding.UTF8.GetBytes("viewport.unity");
-        static readonly byte[] KCunning = System.Text.Encoding.UTF8.GetBytes("viewport.cunning");
         static ulong _lastBlob;
         static double _lastPush;
-        static ulong _lastCunningBlob;
         static bool _subscribed;
 
         static CunningViewportSync() { EditorApplication.update += Tick; SceneView.duringSceneGui += OnSceneGUI; _subscribed = true; }
 
         static void Tick() {
             if (!CunningSyncState.Enabled || !CunningSyncState.SyncCamera) return;
-            if (!CunningBridge.Instance.DbOpened) return;
+            if (!CunningSyncSharedMemory.IsReady) return;
             var sv = SceneView.lastActiveSceneView; if (sv == null || sv.camera == null) return;
             var now = EditorApplication.timeSinceStartup;
             if (now - _lastPush < 0.05) return;
@@ -28,7 +24,7 @@ namespace CunningEngine.Editor {
         static void OnSceneGUI(SceneView sv) {
             if (!_subscribed || sv == null || sv.camera == null) return;
             if (!CunningSyncState.Enabled || !CunningSyncState.SyncCamera) return;
-            if (!CunningBridge.Instance.DbOpened) return;
+            if (!CunningSyncSharedMemory.IsReady) return;
             if (Event.current == null || Event.current.type != EventType.Repaint) return;
             if (IsUserInteracting()) return;
             PullCunningViewport(sv);
@@ -60,24 +56,12 @@ namespace CunningEngine.Editor {
             WF(b, 44, q.x); WF(b, 48, q.y); WF(b, 52, q.z); WF(b, 56, q.w);
             var h = Hash64(b); if (h == _lastBlob) return;
             _lastBlob = h;
-
-            var gch = GCHandle.Alloc(b, GCHandleType.Pinned);
-            try { CunningSyncNative.PutLatest(KUnity, gch.AddrOfPinnedObject(), (uint)b.Length); }
-            finally { gch.Free(); }
+            CunningSyncSharedMemory.TryWriteUnityViewport(b);
         }
 
         static void PullCunningViewport(SceneView sv) {
-            var bid = CunningSyncNative.GetLatest(KCunning);
-            if (bid == 0 || bid == _lastCunningBlob) return;
-            var len = CunningSyncNative.GetBlobSize(bid);
-            if (len < 64 || len > 4096) return;
-            var b = new byte[len];
-            var gch = GCHandle.Alloc(b, GCHandleType.Pinned);
-            try {
-                var copied = CunningSyncNative.CopyBlob(bid, gch.AddrOfPinnedObject(), (uint)b.Length);
-                if (copied < 64) return;
-            } finally { gch.Free(); }
-            _lastCunningBlob = bid;
+            var b = new byte[CunningSyncSharedMemory.PayloadSize];
+            if (!CunningSyncSharedMemory.TryReadC3DViewport(b)) return;
 
             var ver = RU(b, 0); if (ver != 1) return;
             var basis = RU(b, 4); // 0=internal
