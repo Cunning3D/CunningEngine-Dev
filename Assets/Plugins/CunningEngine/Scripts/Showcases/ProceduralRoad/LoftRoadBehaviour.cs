@@ -1522,6 +1522,17 @@ namespace Unity.Splines.Examples
             int splineIndex = FindSplineIndex(s);
             bool requiresSynchronousRefresh = splineIndex < 0 || m_SynchronousSplineRefreshIndices.Contains(splineIndex);
             MarkSplineDirty(splineIndex >= 0 ? splineIndex : FindSplineIndex(s));
+#if UNITY_EDITOR
+            if (ContinuousSplineImplicitJunctionManager.IsApplyingChanges)
+            {
+                if (splineIndex >= 0)
+                {
+                    MarkSplineDownstreamDirty(splineIndex);
+                }
+
+                return;
+            }
+#endif
             if (requiresSynchronousRefresh)
             {
                 if (splineIndex >= 0)
@@ -8937,9 +8948,151 @@ namespace Unity.Splines.Examples
             public bool isRightLane;                // 是否是右侧车道（用于确定In/Out）
         }
 
+        internal readonly struct LaneJunctionEndpointInfo
+        {
+            public readonly Vector3 point;
+            public readonly Vector3 inwardNormal;
+            public readonly int localLaneIndex;
+            public readonly int splineIndex;
+            public readonly int localSegmentIndex;
+            public readonly int segmentId;
+            public readonly long boundaryMarkerId;
+            public readonly bool isRightLane;
+            public readonly bool isInboundLane;
+            public readonly bool isStartBoundary;
+
+            public LaneJunctionEndpointInfo(
+                Vector3 point,
+                Vector3 inwardNormal,
+                int localLaneIndex,
+                int splineIndex,
+                int localSegmentIndex,
+                int segmentId,
+                long boundaryMarkerId,
+                bool isRightLane,
+                bool isInboundLane,
+                bool isStartBoundary)
+            {
+                this.point = point;
+                this.inwardNormal = inwardNormal;
+                this.localLaneIndex = localLaneIndex;
+                this.splineIndex = splineIndex;
+                this.localSegmentIndex = localSegmentIndex;
+                this.segmentId = segmentId;
+                this.boundaryMarkerId = boundaryMarkerId;
+                this.isRightLane = isRightLane;
+                this.isInboundLane = isInboundLane;
+                this.isStartBoundary = isStartBoundary;
+            }
+        }
+
         [SerializeField]
         [HideInInspector]
         private List<LaneMeshData> m_LaneMeshDataList = new List<LaneMeshData>();
+
+        internal void CollectLaneEndpointsForJunction(
+            JunctionData junction,
+            int splineIndex,
+            long markerId,
+            List<LaneJunctionEndpointInfo> destination)
+        {
+            if (junction == null || destination == null || m_LaneMeshDataList == null || m_LaneMeshDataList.Count == 0)
+            {
+                return;
+            }
+
+            for (int laneIndex = 0; laneIndex < m_LaneMeshDataList.Count; laneIndex++)
+            {
+                LaneMeshData laneData = m_LaneMeshDataList[laneIndex];
+                if (laneData == null || laneData.points == null || laneData.points.Count == 0 || laneData.splineIndex != splineIndex)
+                {
+                    continue;
+                }
+
+                bool matchesStart = laneData.startJunction == junction && MarkerMatches(markerId, laneData.startMarkerId);
+                bool matchesEnd = laneData.endJunction == junction && MarkerMatches(markerId, laneData.endMarkerId);
+                if (!matchesStart && !matchesEnd)
+                {
+                    continue;
+                }
+
+                if (matchesStart)
+                {
+                    AppendLaneEndpointInfo(laneData, junction, useStartBoundary: true, destination);
+                }
+
+                if (matchesEnd && (!matchesStart || laneData.startMarkerId != laneData.endMarkerId))
+                {
+                    AppendLaneEndpointInfo(laneData, junction, useStartBoundary: false, destination);
+                }
+            }
+        }
+
+        private static bool MarkerMatches(long requestedMarkerId, long boundaryMarkerId)
+        {
+            return requestedMarkerId == 0 || requestedMarkerId == boundaryMarkerId;
+        }
+
+        private void AppendLaneEndpointInfo(
+            LaneMeshData laneData,
+            JunctionData junction,
+            bool useStartBoundary,
+            List<LaneJunctionEndpointInfo> destination)
+        {
+            if (laneData == null || laneData.points == null || laneData.points.Count == 0)
+            {
+                return;
+            }
+
+            int pointIndex = useStartBoundary ? 0 : laneData.points.Count - 1;
+            int neighborIndex = useStartBoundary
+                ? Mathf.Min(1, laneData.points.Count - 1)
+                : Mathf.Max(laneData.points.Count - 2, 0);
+
+            Vector3 point = transform.TransformPoint(laneData.points[pointIndex]);
+            Vector3 inwardNormal;
+            if (laneData.points.Count > 1)
+            {
+                Vector3 neighborPoint = transform.TransformPoint(laneData.points[neighborIndex]);
+                inwardNormal = useStartBoundary ? (neighborPoint - point) : (point - neighborPoint);
+            }
+            else
+            {
+                inwardNormal = transform.forward;
+            }
+
+            inwardNormal.y = 0f;
+            if (inwardNormal.sqrMagnitude <= 1e-5f)
+            {
+                inwardNormal = transform.forward;
+                inwardNormal.y = 0f;
+            }
+
+            if (inwardNormal.sqrMagnitude > 1e-5f)
+            {
+                inwardNormal.Normalize();
+            }
+
+            Vector3 toCenter = junction.GetJunctionCenter() - point;
+            toCenter.y = 0f;
+            if (toCenter.sqrMagnitude > 1e-5f && Vector3.Dot(inwardNormal, toCenter.normalized) < 0f)
+            {
+                inwardNormal = -inwardNormal;
+            }
+
+            bool isInboundLane = useStartBoundary ? !laneData.isRightLane : laneData.isRightLane;
+            destination.Add(new LaneJunctionEndpointInfo(
+                point,
+                inwardNormal,
+                laneData.localLaneIndex,
+                laneData.splineIndex,
+                laneData.localSegmentIndex,
+                laneData.segmentId,
+                useStartBoundary ? laneData.startMarkerId : laneData.endMarkerId,
+                laneData.isRightLane,
+                isInboundLane,
+                useStartBoundary));
+        }
 
         // 在生成车道网格时，同时收集顶点数据
         private void CollectLaneMeshData(

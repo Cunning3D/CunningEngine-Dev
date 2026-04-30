@@ -153,8 +153,9 @@ namespace Unity.Splines.Examples
                     && conn.road.Container.Splines[conn.splineIndex] != null
                     && conn.road.Container.Splines[conn.splineIndex].Count > 0)
                 {
-                    int curveCount = Mathf.Max(1, conn.road.Container.Splines[conn.splineIndex].Count - 1);
-                    cachedCurveU = Mathf.Clamp01(conn.knotIndex / (float)curveCount);
+                    cachedCurveU = LoftRoadBehaviour.ComputeKnotCurveU(
+                        conn.road.Container.Splines[conn.splineIndex],
+                        conn.knotIndex);
                     cachedPreferredKnotIndex = Mathf.Clamp(conn.knotIndex, 0, conn.road.Container.Splines[conn.splineIndex].Count - 1);
                 }
 

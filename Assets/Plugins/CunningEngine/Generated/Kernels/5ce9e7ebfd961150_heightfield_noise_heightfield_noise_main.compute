@@ -1,0 +1,403 @@
+#pragma kernel heightfield_noise_main
+// CUNNING_KERNEL_PACKAGE v1
+// kernel=heightfield.noise.sparse_hmft.dense_f32.v1
+// entry=heightfield_noise_main
+// layout_hash=0x79f7751d657d16a7
+// binding_hash=0xf5dc55c89f9372ad
+// math_hash=0xe9a69c71f37547cf
+// contract_hash=0x0643bd8d567a8df9
+
+StructuredBuffer<float> src_field : register(t0);
+RWStructuredBuffer<float> dst_field : register(u1);
+
+static const uint WIDTH = 500u;
+static const uint HEIGHT = 500u;
+static const uint STRIDE = 2u;
+
+uint cell_index(uint x, uint y) {
+    return y * WIDTH + x;
+}
+
+uint cell_base(uint index) {
+    return index * STRIDE;
+}
+
+void copy_cell(uint base) {
+    for (uint i = 0u; i < STRIDE; i = i + 1u) {
+        dst_field[base + i] = src_field[base + i];
+    }
+}
+
+float read_layer_clamped(int x, int y, uint layer_offset) {
+    uint cx = (uint)clamp(x, 0, (int)WIDTH - 1);
+    uint cy = (uint)clamp(y, 0, (int)HEIGHT - 1);
+    return src_field[cell_base(cell_index(cx, cy)) + layer_offset];
+}
+static const uint TARGET_OFFSET = 0u;
+static const int BASIS_TYPE = 3;
+static const int FRACTAL_TYPE = 3;
+static const int COMBINE_MODE = 1;
+static const float BLEND = 0.500000000;
+static const float AMPLITUDE = 500.079986572;
+static const uint OCTAVES = 8u;
+static const float LACUNARITY = 3.619999886;
+static const float ROUGHNESS = 0.000000000;
+static const bool CENTER_NOISE = true;
+static const bool FOLD_SIGNAL = false;
+static const bool COMPLEMENT_SIGNAL = false;
+static const bool USE_GAIN = false;
+static const float GAIN = 0.500000000;
+static const bool USE_BIAS = false;
+static const float BIAS = 0.500000000;
+static const float CLIP_MIN = 0.000000000;
+static const float CLIP_MAX = 1.000000000;
+static const float SAMPLE_OFFSET = 0.500000000;
+static const float3 ORIGIN = float3(-500.000000000, -1.000000000, -500.000000000);
+static const float3 STEP_X = float3(0.000000000, 0.000000000, 2.000000000);
+static const float3 STEP_Y = float3(2.000000000, 0.000000000, 0.000000000);
+static const float3 STEP_Z = float3(0.000000000, 2.000000000, 0.000000000);
+static const float3 FREQUENCY = float3(0.002741980, 0.002741980, 0.002741980);
+static const float3 NOISE_OFFSET = float3(123.000000000, 123.000000000, 123.000000000);
+static const float SPARSE_FEATURE_VALUES[192] = {
+    0.448569268, 0.648860157, 0.289951861, 0.421501070, 0.645699561, 0.347036213,
+    0.494802088, 0.642124176, 0.250586122, 0.655239344, 0.802820385, 0.411323369,
+    0.599862218, 0.525057316, 0.577246308, 0.514992774, 0.419781119, 0.436599106,
+    0.765605211, 0.580808997, 0.329194725, 0.484697193, 0.373455375, 0.402245432,
+    0.544679642, 0.546393335, 0.376701534, 0.651486814, 0.677697480, 0.698535860,
+    0.392392516, 0.565893292, 0.545119762, 0.438437909, 0.340908825, 0.720663488,
+    0.386261344, 0.457480162, 0.575036049, 0.511891067, 0.567679346, 0.445236981,
+    0.416105181, 0.443367392, 0.549089134, 0.404985696, 0.721148252, 0.361948162,
+    0.355758786, 0.610600770, 0.712883711, 0.403014392, 0.647081137, 0.546266794,
+    0.475300044, 0.411438644, 0.120824598, 0.387859076, 0.479180753, 0.343669534,
+    0.491497546, 0.450044811, 0.764980316, 0.536416769, 0.489267975, 0.593435228,
+    0.592988431, 0.420706481, 0.509847581, 0.636329830, 0.476964861, 0.302315414,
+    0.386467427, 0.374426842, 0.468892753, 0.498912960, 0.348215193, 0.573864162,
+    0.487392843, 0.498465627, 0.455119610, 0.539273083, 0.345632195, 0.466814041,
+    0.706054866, 0.383625209, 0.177892685, 0.489090890, 0.485129446, 0.463069618,
+    0.466578633, 0.575927138, 0.386728436, 0.485478818, 0.441034466, 0.711760998,
+    0.378100336, 0.377520055, 0.435649872, 0.522836447, 0.412454814, 0.535394847,
+    0.369199723, 0.318808615, 0.460232943, 0.506667972, 0.644260168, 0.605315328,
+    0.506429613, 0.546909213, 0.338517189, 0.416692942, 0.400104761, 0.517038763,
+    0.670846224, 0.552524686, 0.269532710, 0.413828611, 0.366555452, 0.550592422,
+    0.582433105, 0.560259223, 0.426863164, 0.388676554, 0.441254497, 0.557974815,
+    0.597859204, 0.440927267, 0.491600871, 0.218011677, 0.545025527, 0.637686133,
+    0.417592615, 0.603392541, 0.616947472, 0.599274099, 0.629310787, 0.546931148,
+    0.485784352, 0.401603013, 0.655117571, 0.544391036, 0.541034400, 0.375370413,
+    0.425729543, 0.540952563, 0.446940660, 0.371314704, 0.308507115, 0.488610655,
+    0.517480910, 0.435819834, 0.455289751, 0.624726832, 0.697478652, 0.395023048,
+    0.303269535, 0.515642464, 0.489656180, 0.473905861, 0.680239916, 0.439709961,
+    0.567857683, 0.295949191, 0.503631353, 0.440245897, 0.667803347, 0.683544815,
+    0.512948394, 0.479324102, 0.378142565, 0.536702931, 0.327077091, 0.560255051,
+    0.477366775, 0.571462274, 0.647433996, 0.548237681, 0.433101237, 0.322863013,
+    0.421212822, 0.398155779, 0.364432424, 0.424617469, 0.410693109, 0.663332820,
+    0.522327721, 0.529395878, 0.578359365, 0.461400807, 0.664756477, 0.302580506
+};
+static const float SPARSE_SIGNAL_VALUES[384] = {
+    -0.512697875, -0.450138897, -1.291475892, 0.729013860, -0.006023790, 0.415861875,
+    -0.741292477, 0.346357614, -1.168905139, 1.474868894, -0.061928488, 0.896423995,
+    0.322329879, -0.939154387, -0.072086632, -0.921485364, 0.133047864, -1.239987373,
+    -0.438315868, 0.800971508, 0.157829493, 0.978133738, -1.215906501, 0.806407630,
+    -0.092993312, -0.389966249, -0.447073758, 0.003796780, 0.006419640, -0.053696100,
+    -0.311491966, 0.458935440, -0.199726984, 0.582611740, -0.198267713, 2.540361404,
+    0.071205042, -1.294653893, -1.164091110, -0.594983816, 1.131575823, 0.207641333,
+    -0.114098437, -0.342693955, -0.669777930, 0.073557943, 0.591142595, 0.792864799,
+    -0.424123973, -0.665196657, -1.866847873, 0.678298414, 1.589180589, 0.138941705,
+    -0.271524012, -0.196291283, -0.323756307, 0.347902000, -0.898751497, -0.477748424,
+    -0.848218441, -1.099431753, -2.602845430, 1.056487918, 0.606281519, 1.571280122,
+    0.729110181, -0.027523620, 1.804942012, -1.454143643, -1.118010521, -0.849077106,
+    1.227264047, -0.489546508, 2.183662653, -2.434657812, -0.415322363, -1.920545220,
+    -0.498513103, 1.525332689, 0.389379710, 1.516333938, -0.846890986, 0.053102080,
+    0.124229550, 0.657566845, 0.621744335, 0.124921247, 0.161489919, -0.588602483,
+    -0.164794475, -0.428391516, -1.078827620, 0.251540452, 1.254870653, 0.223749563,
+    0.700639784, 0.987592936, 1.978622317, -0.880601943, 0.127862647, 0.343776435,
+    -0.266087055, 0.159655079, -0.166873857, 0.581840396, -0.658667088, -1.234667540,
+    0.160508826, 0.065875567, 0.110701650, -0.238918617, 0.661903679, 0.645709753,
+    -0.417739511, -0.632147074, -1.176060200, 0.522435486, -0.171013176, -0.594129860,
+    0.110480562, 0.660977900, 0.377852321, 0.219692260, 0.747248948, -0.545301199,
+    -0.061642639, -0.859310985, -1.650825024, -0.001827160, 2.535766125, 0.500661790,
+    0.312555075, 0.734171033, 0.892327845, -0.146180615, 0.548548222, -0.607240856,
+    -0.617517114, -1.063983202, -1.880196095, 0.802834034, -0.127076834, -1.891198754,
+    -0.069100820, 0.003088780, -0.175903305, 0.151459098, 0.116813451, -0.086143851,
+    0.715719283, 0.697021425, 1.497459292, -0.911059856, 0.955150366, -0.053823929,
+    0.988708496, 0.375218242, 2.596543312, -1.565360665, -1.211602211, -3.683881998,
+    -0.674646735, 1.324349999, -0.496658444, 1.694911122, 0.290778786, 2.785081863,
+    0.692385375, 1.164126635, 2.215170860, -0.888733625, -0.210784823, 1.199666381,
+    -0.368250787, 0.521490276, 0.267287523, 0.820557177, -1.689318419, -1.348522663,
+    0.702646971, 0.177301928, 1.093940139, -1.122038126, 1.026002407, 0.086484760,
+    0.131863281, -0.981859028, -0.849197030, -0.481095731, 1.150004387, -0.958164394,
+    -0.132764414, -0.236598358, 0.050392989, -0.084716879, -1.226212263, 1.096628666,
+    -0.745797098, 0.005885470, -1.301648855, 1.373162031, -0.365875363, -0.198586375,
+    -0.824980319, -0.541519642, -1.998552918, 1.265326858, 0.109753489, 0.729214251,
+    0.042652819, 0.318815291, 0.180321217, 0.129558638, 0.308432847, -0.398960501,
+    0.933982909, -0.907396317, 1.002752781, -2.048102856, 0.485305429, -0.758306146,
+    1.000885606, 1.846883893, 3.147093296, -1.113378286, 0.127545893, 1.109526277,
+    0.281595767, -0.387486696, 0.334590614, -0.679132879, -0.151556179, -0.579343617,
+    0.230712205, -1.319706440, -0.392904222, -0.945652008, -0.174712151, -1.406911373,
+    -0.838981390, -0.232015923, -1.230623007, 1.157897353, -1.427486181, 1.935759425,
+    -0.779715419, -0.024553491, -1.385421276, 1.342046976, -0.352539182, 0.938351810,
+    -0.635391057, -0.190753266, -1.495411396, 0.945979297, 0.417592973, 2.905851603,
+    0.067315198, -0.525354147, -0.931076467, -0.323101223, 1.923440933, 2.640561819,
+    0.340471357, -0.062707789, 0.818829000, -0.771705210, -0.531597376, 0.553251505,
+    0.178972274, -0.721371055, 0.124574177, -0.694208741, -0.726705670, -0.741401017,
+    0.070275128, -0.334733844, -0.130530924, -0.164575234, 0.078648753, -1.491535068,
+    -0.632562160, -1.392312169, -1.948504567, 0.426732749, -0.567008495, 0.907854915,
+    -0.103799380, -0.935709119, -1.040062666, -0.150804162, 0.542687833, -0.137008771,
+    0.906576812, 1.119494677, 2.518540382, -1.193744063, -0.019197080, -0.094067752,
+    -0.070519589, 0.563616633, 0.240651280, 0.325196981, 0.029767500, 0.885097206,
+    0.224094331, -0.586793303, 0.157785684, -0.672239065, -0.339533865, -0.734250546,
+    0.051180750, 1.349229693, 0.701011419, 0.536757112, 0.852772832, 1.058439374,
+    0.969866574, -0.458418071, 1.390893102, -1.827615738, 0.425159305, -2.037910938,
+    0.713468075, -0.980665028, 0.239021420, -1.471048474, 1.226136088, -2.226132154,
+    0.245805085, 0.423362881, 0.738304615, -0.284029126, 0.069228970, 0.294090331,
+    -0.083193183, -0.371156573, -0.685769200, 0.033686072, 0.738263488, 0.610980928,
+    0.302496821, -1.002416253, -0.892082930, -0.902281404, 2.156774998, 1.968458414,
+    -0.013380150, 0.275795430, 0.159872979, 0.219977736, -0.013765790, -0.995585978,
+    0.009666190, -0.163823366, -0.039916120, -0.103122883, -0.141310662, -0.079223067,
+    -0.005298550, -0.024310149, 0.292773068, -0.155678719, -0.838155091, 0.738284826,
+    0.164081514, -0.297540963, 0.315443456, -0.403221965, -0.558432996, -1.456980467,
+    0.031337839, -0.030689711, -0.347100347, 0.048951931, 1.031076670, 0.036192600,
+    -0.874678373, -0.585310340, -1.924662590, 1.328062534, -0.435236573, -0.024114851
+};
+
+static const float EPSILON = 0.000001;
+static const float SPARSE_MIN = -2.343510000;
+static const float SPARSE_MAX = 2.438430000;
+static const float SPARSE_AVG = 0.496090000;
+static const float SPARSE_SIGNAL_SCALE = 4.0;
+static const float SPARSE_BIAS = 0.068819620;
+static const float SPARSE_METABALL_RADII[4] = { 1.3, 1.5, 1.7, 1.9 };
+static const float SPARSE_METABALL_COEFFICIENTS[24] = {
+    -0.001316170, -0.194211990, -0.039976236, -0.120431820, -0.249929820, 0.074289580,
+    -0.023915496, 0.358847230, 0.034516662, 0.281048480, 0.427783340, -0.318169980,
+    0.052872095, -0.143816920, 0.118657560, -0.230152730, -0.296374620, 0.418907230,
+    -0.038225770, -0.018335572, -0.115030770, 0.084053840, 0.073640436, -0.160388930
+};
+
+float fit_clamped(float value, float old_min, float old_max, float new_min, float new_max) {
+    if (abs(old_max - old_min) <= EPSILON) {
+        return new_min;
+    }
+    float t = clamp((value - old_min) / (old_max - old_min), 0.0, 1.0);
+    return lerp(new_min, new_max, t);
+}
+
+float smoothstep_local(float edge0, float edge1, float value) {
+    if (abs(edge1 - edge0) <= EPSILON) {
+        return value >= edge1 ? 1.0 : 0.0;
+    }
+    float t = clamp((value - edge0) / (edge1 - edge0), 0.0, 1.0);
+    return t * t * (3.0 - 2.0 * t);
+}
+
+float apply_bias(float value, float bias) {
+    float safe_bias = clamp(bias, 0.0001, 0.9999);
+    return value / ((((1.0 / safe_bias) - 2.0) * (1.0 - value)) + 1.0);
+}
+
+float apply_gain(float value, float gain) {
+    float safe_gain = clamp(gain, 0.0001, 0.9999);
+    if (value < 0.5) {
+        return apply_bias(value * 2.0, safe_gain) * 0.5;
+    }
+    return 1.0 - apply_bias(2.0 - value * 2.0, safe_gain) * 0.5;
+}
+
+float natten(float value, float k, float e) {
+    float x = value * 2.0 - 1.0;
+    return pow(max(0.0, 1.0 - x * x), e * 0.5) * (1.0 - k) + k;
+}
+
+uint hash_u32(int x, int y, int z, uint seed_offset) {
+    uint value = seed_offset
+        ^ ((uint)x * 0x8da6b343u)
+        ^ ((uint)y * 0xd8163841u)
+        ^ ((uint)z * 0xcb1ab31fu)
+        ^ 0x9e3779b9u;
+    value = value ^ (value >> 16u);
+    value = value * 0x7feb352du;
+    value = value ^ (value >> 15u);
+    value = value * 0x846ca68bu;
+    return value ^ (value >> 16u);
+}
+
+uint sparse_slot_index(int3 cell) {
+    return hash_u32(cell.y, cell.z, cell.x, 0u) & 63u;
+}
+
+float sparse_feature_value(uint slot_index, uint component) {
+    return SPARSE_FEATURE_VALUES[slot_index * 3u + component];
+}
+
+float sparse_signal_value(uint slot_index, uint component) {
+    return SPARSE_SIGNAL_VALUES[slot_index * 6u + component];
+}
+
+float sparse_metaball_weight(float distance_sq, float radius) {
+    float radius_sq = radius * radius;
+    if (distance_sq >= radius_sq) {
+        return 0.0;
+    }
+    float t = 1.0 - distance_sq / radius_sq;
+    return t * t * t;
+}
+
+float cellular_sparse_basis_raw(float3 coord) {
+    int3 base = (int3)floor(coord);
+    float sum = SPARSE_BIAS;
+    for (int dz = -2; dz <= 2; dz = dz + 1) {
+        for (int dy = -2; dy <= 2; dy = dy + 1) {
+            for (int dx = -2; dx <= 2; dx = dx + 1) {
+                int3 cell = base + int3(dx, dy, dz);
+                uint slot = sparse_slot_index(cell);
+                float3 feature = float3(
+                    (float)cell.x + sparse_feature_value(slot, 0u),
+                    (float)cell.y + sparse_feature_value(slot, 1u),
+                    (float)cell.z + sparse_feature_value(slot, 2u)
+                );
+                float3 delta = coord - feature;
+                float distance_sq = dot(delta, delta);
+                for (uint radius_index = 0u; radius_index < 4u; radius_index = radius_index + 1u) {
+                    float weight = sparse_metaball_weight(distance_sq, SPARSE_METABALL_RADII[radius_index]);
+                    if (weight <= 0.0) {
+                        continue;
+                    }
+                    float signal = 0.0;
+                    for (uint component = 0u; component < 6u; component = component + 1u) {
+                        signal = signal + sparse_signal_value(slot, component)
+                            * SPARSE_METABALL_COEFFICIENTS[radius_index * 6u + component];
+                    }
+                    sum = sum + signal * weight * SPARSE_SIGNAL_SCALE;
+                }
+            }
+        }
+    }
+    return sum;
+}
+
+float normalized_sparse_basis_value(float3 coord) {
+    return fit_clamped(cellular_sparse_basis_raw(coord * 1.2), SPARSE_MIN, SPARSE_MAX, 0.0, 1.0);
+}
+
+float basis_pivot() {
+    float pivot = SPARSE_AVG;
+    if (FOLD_SIGNAL) {
+        pivot = pivot * pivot;
+    }
+    return pivot;
+}
+
+float basis_correction(float value) {
+    float out_value = value;
+    if (FOLD_SIGNAL) {
+        out_value = abs(out_value - SPARSE_AVG) / max(SPARSE_AVG, 1.0 - SPARSE_AVG);
+    }
+    return clamp(out_value, 0.0, 1.0);
+}
+
+float evaluate_basis(float3 coord) {
+    return basis_correction(normalized_sparse_basis_value(coord));
+}
+
+float fractal_noise(float3 coord) {
+    float base = evaluate_basis(coord);
+    if (FRACTAL_TYPE == 0 || LACUNARITY * (float)OCTAVES * ROUGHNESS <= EPSILON) {
+        return base;
+    }
+
+    float pivot = basis_pivot();
+    float lac = abs(LACUNARITY);
+    float gain = abs(ROUGHNESS) * min(lac, 1.0);
+    float wk = lerp(10.0, FOLD_SIGNAL ? 10.0 : 1.6, smoothstep_local(1.0, 1.8, lac));
+    float out_value = base - pivot;
+    float wsum = 1.0;
+    float weight = 1.0;
+    if (FRACTAL_TYPE == 2) {
+        weight = base;
+    }
+    if (FRACTAL_TYPE == 3) {
+        weight = base * 2.0;
+    }
+    float3 octave_coord = coord;
+    for (uint octave = 1u; octave <= OCTAVES; octave = octave + 1u) {
+        weight = weight * gain;
+        octave_coord = octave_coord * lac;
+        float chaos = evaluate_basis(octave_coord) - pivot;
+        out_value = out_value + weight * chaos;
+        wsum = wsum + wk * weight * weight;
+        if (FRACTAL_TYPE == 3) {
+            weight = weight * 2.0 * (chaos + pivot);
+        }
+    }
+    if (wsum > EPSILON) {
+        out_value = out_value / sqrt(wsum);
+    }
+    out_value = out_value * fit_clamped(gain, 0.0, 0.1, 1.0, natten(out_value + pivot, 0.9, 2.0)) + pivot;
+    return clamp(out_value, 0.0, 1.0);
+}
+
+float apply_output_correction(float chaos) {
+    float out_value = chaos;
+    if (USE_BIAS) {
+        out_value = apply_bias(out_value, BIAS);
+    }
+    if (USE_GAIN) {
+        out_value = apply_gain(out_value, GAIN);
+    }
+    if (COMPLEMENT_SIGNAL) {
+        out_value = 1.0 - out_value;
+    }
+    out_value = clamp(out_value, min(CLIP_MIN, CLIP_MAX), max(CLIP_MIN, CLIP_MAX));
+    if (CENTER_NOISE) {
+        out_value = out_value - 0.5;
+    }
+    return out_value * AMPLITUDE;
+}
+
+float combine_height(float current, float candidate) {
+    if (COMBINE_MODE == 0) {
+        return candidate;
+    }
+    if (COMBINE_MODE == 2) {
+        return current - candidate;
+    }
+    if (COMBINE_MODE == 3) {
+        return abs(current - candidate);
+    }
+    if (COMBINE_MODE == 4) {
+        return current * candidate;
+    }
+    if (COMBINE_MODE == 5) {
+        return max(current, candidate);
+    }
+    if (COMBINE_MODE == 6) {
+        return min(current, candidate);
+    }
+    if (COMBINE_MODE == 7) {
+        return lerp(current, candidate, BLEND);
+    }
+    return current + candidate;
+}
+
+float3 sample_position(uint3 gid) {
+    return ORIGIN
+        + STEP_X * ((float)gid.x + SAMPLE_OFFSET)
+        + STEP_Y * ((float)gid.y + SAMPLE_OFFSET)
+        + STEP_Z * 0.5;
+}
+
+float3 transformed_noise_coord(float3 position) {
+    return position * FREQUENCY - NOISE_OFFSET;
+}
+
+[numthreads(16, 16, 1)]
+void heightfield_noise_main(uint3 gid : SV_DispatchThreadID) {
+    if (gid.x >= WIDTH || gid.y >= HEIGHT) {
+        return;
+    }
+    uint index = cell_index(gid.x, gid.y);
+    uint base = cell_base(index);
+    copy_cell(base);
+    float candidate = apply_output_correction(fractal_noise(transformed_noise_coord(sample_position(gid))));
+    float current = src_field[base + TARGET_OFFSET];
+    dst_field[base + TARGET_OFFSET] = combine_height(current, candidate);
+}

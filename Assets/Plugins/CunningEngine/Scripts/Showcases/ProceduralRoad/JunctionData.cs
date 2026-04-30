@@ -850,6 +850,11 @@ namespace Unity.Splines.Examples
         
         public Vector3 GetJunctionCenter()
         {
+            if (IsImplicitAutoJunction)
+            {
+                return transform.position;
+            }
+
             if(connectedRoads == null || connectedRoads.Count == 0) return transform.position;
             
             Vector3 center = Vector3.zero;
@@ -1759,6 +1764,8 @@ namespace Unity.Splines.Examples
             {
                 return;
             }
+
+            SortConnectedRoads();
 
             // 设置位置到路口中心
             Vector3 center = GetJunctionCenter();
@@ -2834,25 +2841,42 @@ namespace Unity.Splines.Examples
             ignoreRoadUpdates = ignore;
         }
 
-        private void SortConnectedRoads()
+        internal void SortConnectedRoads()
         {
+            if (connectedRoads == null || connectedRoads.Count < 2)
+            {
+                return;
+            }
+
             Vector3 center = GetJunctionCenter();
-            var roadAngles = new List<(ConnectedRoad road, float angle)>();
-            
-            // 计算每个连接点相对于中心点的角度
+            var validRoads = new List<(ConnectedRoad road, Vector3 position)>(connectedRoads.Count);
+            var invalidRoads = new List<ConnectedRoad>();
+
             foreach (var road in connectedRoads)
             {
-                var edgePoints = road.GetEdgePoints(center);
-                var midPoint = (edgePoints.point0 + edgePoints.point1) * 0.5f;
-                var angle = Mathf.Atan2(midPoint.z - center.z, midPoint.x - center.x);
-                roadAngles.Add((road, angle));
+                if (road == null || !road.HasValidSplineReference())
+                {
+                    invalidRoads.Add(road);
+                    continue;
+                }
+
+                validRoads.Add((road, road.GetConnectionPoint()));
             }
-            
-            // 按角度排序
-            roadAngles.Sort((a, b) => a.angle.CompareTo(b.angle));
-            
-            // 更新连接点列表
-            connectedRoads = roadAngles.Select(x => x.road).ToList();
+
+            if (validRoads.Count < 2)
+            {
+                return;
+            }
+
+            validRoads.Sort((left, right) =>
+                GetClockwiseAngleXZ(right.position, center).CompareTo(GetClockwiseAngleXZ(left.position, center)));
+
+            connectedRoads = validRoads.Select(entry => entry.road).Concat(invalidRoads).ToList();
+        }
+
+        private static float GetClockwiseAngleXZ(Vector3 point, Vector3 center)
+        {
+            return Mathf.Atan2(point.z - center.z, point.x - center.x);
         }
 
         private void InitializeLaneConnector()
@@ -2870,6 +2894,7 @@ namespace Unity.Splines.Examples
 
         private void UpdateLaneConnections()
         {
+            SortConnectedRoads();
             if (laneConnector != null)
             {
                 laneConnector.GenerateConnections();
@@ -2879,6 +2904,24 @@ namespace Unity.Splines.Examples
         // 这个类负责处理路口的车道连接
         private class JunctionLaneConnector
         {
+            private readonly struct JunctionLaneEndpoint
+            {
+                public readonly Vector3 pos;
+                public readonly Vector3 normal;
+                public readonly int laneIndex;
+                public readonly ConnectedRoad road;
+                public readonly long markerId;
+
+                public JunctionLaneEndpoint(Vector3 pos, Vector3 normal, int laneIndex, ConnectedRoad road, long markerId)
+                {
+                    this.pos = pos;
+                    this.normal = normal;
+                    this.laneIndex = laneIndex;
+                    this.road = road;
+                    this.markerId = markerId;
+                }
+            }
+
             // 车道连接数据结构
             [System.Serializable]
             public class LaneConnection
@@ -2913,177 +2956,102 @@ namespace Unity.Splines.Examples
             // 生成车道连接
             public void GenerateConnections()
             {
-                if (junctionData == null) return;
+                if (junctionData == null)
+                {
+                    return;
+                }
 
-                Debug.Log("开始生成车道连接...");
                 laneConnections.Clear();
-                Vector3 junctionCenter = junctionData.GetJunctionCenter();
 
-                // 计算所有道路的LtRVector
                 junctionData.CalculateLtRVectors();
+                var inLanes = new List<JunctionLaneEndpoint>();
+                var outLanes = new List<JunctionLaneEndpoint>();
+                var endpointBuffer = new List<LoftRoadBehaviour.LaneJunctionEndpointInfo>();
+                var collectedEndpointKeys = new HashSet<(int roadId, int splineIndex, long markerId, int laneIndex, bool isInbound)>();
 
-                // 收集所有入口和出口车道
-                var inLanes = new List<(Vector3 pos, Vector3 normal, int laneIndex, ConnectedRoad road, int knotIndex)>();
-                var outLanes = new List<(Vector3 pos, Vector3 normal, int laneIndex, ConnectedRoad road, int knotIndex)>();
-
-                // 只遍历当前路口连接的道路
                 foreach (var road in junctionData.connectedRoads)
                 {
                     if (road == null || !road.HasValidSplineReference() || !road.TryGetRoadData(out var roadData))
-                        continue;
-                    
-                    // 获取当前路口的knot索引
-                    int currentJunctionKnotIndex = road.knotIndex;
-                    
-                    // 使用反射获取私有字段
-                    var laneMeshDataField = road.roadBehaviour.GetType()
-                        .GetField("m_LaneMeshDataList", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                    
-                    if (laneMeshDataField == null) continue;
-                    
-                    var laneMeshDataList = laneMeshDataField.GetValue(road.roadBehaviour) as System.Collections.IList;
-                    if (laneMeshDataList == null || laneMeshDataList.Count == 0) continue;
-
-                    // 计算该spline的唯一索引基数
-                    int splineBaseIndex = road.splineIndex * 1000;
-
-                    // 遍历所有车道
-                    for (int laneIndex = 0; laneIndex < roadData.leftLaneCount + roadData.rightLaneCount; laneIndex++)
                     {
-                        var uniqueLaneIndex = splineBaseIndex + laneIndex;
-                        
-                        // 使用反射获取LaneMeshData的属性
-                        var laneMeshData = laneMeshDataList.Cast<object>()
-                            .FirstOrDefault(d => (int)d.GetType().GetField("laneIndex").GetValue(d) == uniqueLaneIndex);
-                        
-                        if (laneMeshData == null) continue;
-                        
-                        var points = laneMeshData.GetType().GetField("points").GetValue(laneMeshData) as List<Vector3>;
-                        if (points == null || points.Count == 0) continue;
+                        continue;
+                    }
 
-                        // 获取车道在路口处的点
-                        Vector3 junctionPoint;
-                        Vector3 arrowDirection;
-                        
-                        // 根据knot索引确定使用哪个点
-                        if (currentJunctionKnotIndex == 0)
+                    endpointBuffer.Clear();
+                    road.roadBehaviour.CollectLaneEndpointsForJunction(junctionData, road.splineIndex, road.markerId, endpointBuffer);
+                    for (int endpointIndex = 0; endpointIndex < endpointBuffer.Count; endpointIndex++)
+                    {
+                        LoftRoadBehaviour.LaneJunctionEndpointInfo endpoint = endpointBuffer[endpointIndex];
+                        var endpointKey = (
+                            roadId: road.roadBehaviour != null ? road.roadBehaviour.GetInstanceID() : 0,
+                            splineIndex: endpoint.splineIndex,
+                            markerId: endpoint.boundaryMarkerId,
+                            laneIndex: endpoint.localLaneIndex,
+                            isInbound: endpoint.isInboundLane);
+                        if (!collectedEndpointKeys.Add(endpointKey))
                         {
-                            // 如果是路段的起点，使用第一个点
-                            junctionPoint = road.roadBehaviour.transform.TransformPoint(points[0]);
-                            if (points.Count > 1)
-                            {
-                                Vector3 secondPoint = road.roadBehaviour.transform.TransformPoint(points[1]);
-                                arrowDirection = (secondPoint - junctionPoint).normalized;
-                            }
-                            else
-                            {
-                                arrowDirection = road.roadBehaviour.transform.forward;
-                            }
+                            continue;
+                        }
+
+                        var laneEndpoint = new JunctionLaneEndpoint(
+                            endpoint.point,
+                            endpoint.inwardNormal,
+                            endpoint.localLaneIndex,
+                            road,
+                            endpoint.boundaryMarkerId);
+
+                        if (endpoint.isInboundLane)
+                        {
+                            inLanes.Add(laneEndpoint);
                         }
                         else
                         {
-                            // 如果是路段的终点，使用最后一个点
-                            junctionPoint = road.roadBehaviour.transform.TransformPoint(points[points.Count - 1]);
-                            if (points.Count > 1)
-                            {
-                                Vector3 secondLastPoint = road.roadBehaviour.transform.TransformPoint(points[points.Count - 2]);
-                                arrowDirection = (junctionPoint - secondLastPoint).normalized;
-                            }
-                            else
-                            {
-                                arrowDirection = road.roadBehaviour.transform.forward;
-                            }
-                        }
-
-                        // 检查箭头是否需要反向（如果箭头指向远离路口中心的方向）
-                        Vector3 toCenter = (junctionCenter - junctionPoint).normalized;
-                        bool needFlip = Vector3.Dot(arrowDirection, toCenter) < 0;
-                        Vector3 finalDirection = needFlip ? -arrowDirection : arrowDirection;
-
-                        bool isRightLane = laneIndex >= roadData.leftLaneCount;
-                        
-                        // 根据车道类型和knot位置决定是入口还是出口
-                        if (currentJunctionKnotIndex == 0)
-                        {
-                            // 路段起点：右侧车道是出口，左侧车道是入口
-                            if (isRightLane)
-                            {
-                                outLanes.Add((junctionPoint, finalDirection, laneIndex, road, currentJunctionKnotIndex));
-                            }
-                            else
-                            {
-                                inLanes.Add((junctionPoint, finalDirection, laneIndex, road, currentJunctionKnotIndex));
-                            }
-                        }
-                        else
-                        {
-                            // 路段终点：右侧车道是入口，左侧车道是出口
-                            if (isRightLane)
-                            {
-                                inLanes.Add((junctionPoint, finalDirection, laneIndex, road, currentJunctionKnotIndex));
-                            }
-                            else
-                            {
-                                outLanes.Add((junctionPoint, finalDirection, laneIndex, road, currentJunctionKnotIndex));
-                            }
+                            outLanes.Add(laneEndpoint);
                         }
                     }
                 }
 
                 Debug.Log($"找到 {inLanes.Count} 个入口车道和 {outLanes.Count} 个出口车道");
 
-                // 从出口车道连接到入口车道
                 foreach (var outLane in outLanes)
                 {
-                    // 获取当前出口道路可以连接的所有入口
                     var possibleInLanes = inLanes.Where(inLane => 
                     {
-                        // 不连接到同一条道路
-                        if (inLane.road == outLane.road) return false;
+                        if (inLane.road == null || outLane.road == null)
+                        {
+                            return false;
+                        }
 
-                        // 确保这条道路是当前路口的连接道路
-                        if (!junctionData.connectedRoads.Contains(inLane.road)) return false;
+                        if (inLane.road.roadBehaviour == outLane.road.roadBehaviour &&
+                            inLane.road.splineIndex == outLane.road.splineIndex &&
+                            inLane.markerId == outLane.markerId)
+                        {
+                            return false;
+                        }
 
-                        // 获取入口道路的LtRVector
                         if (!junctionData.roadLtRVectors.TryGetValue(inLane.road, out var ltRData)) return false;
 
-                        // 计算从出口到入口的方向
                         Vector3 connectionDirection = (outLane.pos - inLane.pos).normalized;
                         float angle = Vector3.Angle(connectionDirection, ltRData.ltRVector);
 
-                        // 获取当前出口道路的数据
                         if (outLane.road == null || !outLane.road.TryGetRoadData(out var outRoadData))
                             return false;
-                        
-                        // 如果是Forward车道（右侧车道）
+
                         if (outLane.laneIndex >= outRoadData.leftLaneCount)
                         {
-                            // 计算在当前路段Forward车道中的索引（从右到左）
                             int forwardLaneIndex = outLane.laneIndex - outRoadData.leftLaneCount;
                             int forwardLaneCount = outRoadData.rightLaneCount;
-                            
-                            Debug.Log($"检查Forward车道左转条件：路段[{outLane.road.roadBehaviour.name}] - 总Forward车道数={forwardLaneCount}, 当前Forward索引={forwardLaneIndex}, 是否倒数两个车道={forwardLaneIndex >= forwardLaneCount - 2}, 是否大于3条车道={forwardLaneCount > 3}");
-                            
-                            // 如果当前路段Forward车道数量大于3，且当前车道是该路段倒数两个车道之一
+
                             if (forwardLaneCount > 3 && forwardLaneIndex >= forwardLaneCount - 2)
                             {
-                                Debug.Log($"允许左转连接：路段[{outLane.road.roadBehaviour.name}] Forward车道总数={forwardLaneCount}, 当前Forward索引={forwardLaneIndex}（该路段倒数第{forwardLaneCount - forwardLaneIndex}个）, 角度={angle:F1}°");
-                                // 允许所有角度的连接（包括左转）
                                 return true;
                             }
-                            else
-                            {
-                                Debug.Log($"Forward车道仅允许直行和右转：路段[{outLane.road.roadBehaviour.name}] Forward车道总数={forwardLaneCount}, 当前Forward索引={forwardLaneIndex}（该路段倒数第{forwardLaneCount - forwardLaneIndex}个）, 角度={angle:F1}°");
-                                // 其他Forward车道只允许直行和右转（角度<=100度）
-                                return angle <= 100;
-                            }
+
+                            return angle <= 100;
                         }
 
-                        // 对于非Forward车道，只允许直行和右转
                         return angle <= 100;
                     }).ToList();
 
-                    // 对可能的入口进行排序（基于角度和距离）
                     possibleInLanes.Sort((a, b) =>
                     {
                         float angleA = Vector3.Angle(outLane.normal, a.normal);
@@ -3097,7 +3065,6 @@ namespace Unity.Splines.Examples
                         return scoreA.CompareTo(scoreB);
                     });
 
-                    // 为每个可能的入口创建连接
                     foreach (var inLane in possibleInLanes)
                     {
                         var connection = new LaneConnection
@@ -3112,13 +3079,12 @@ namespace Unity.Splines.Examples
                             endRoadID = inLane.road.roadBehaviour.GetInstanceID(),
                             startSplineIndex = outLane.road.splineIndex,
                             endSplineIndex = inLane.road.splineIndex,
-                            startKnotIndex = outLane.knotIndex,
-                            endKnotIndex = inLane.knotIndex,
-                            startJunction = outLane.road.roadBehaviour.transform.parent.GetComponent<JunctionData>(),
-                            endJunction = inLane.road.roadBehaviour.transform.parent.GetComponent<JunctionData>()
+                            startKnotIndex = outLane.road.cachedPreferredKnotIndex >= 0 ? outLane.road.cachedPreferredKnotIndex : outLane.road.knotIndex,
+                            endKnotIndex = inLane.road.cachedPreferredKnotIndex >= 0 ? inLane.road.cachedPreferredKnotIndex : inLane.road.knotIndex,
+                            startJunction = junctionData,
+                            endJunction = junctionData
                         };
 
-                        // 生成曲线点
                         connection.curvePoints = GenerateCurvePoints(
                             connection.startPoint,
                             connection.endPoint,

@@ -87,12 +87,10 @@ namespace CunningEngine {
             var r = GetComponent<MeshRenderer>(); if (r == null) return;
             var lit = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("HDRP/Lit") ?? Shader.Find("Standard");
             var unlit = Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("HDRP/Unlit") ?? Shader.Find("Unlit/Color");
-            var wire = unlit ?? Shader.Find("Hidden/Internal-Colored") ?? Shader.Find("Unlit/Color");
             var solidShader = EffectiveSolidUnlit ? unlit : lit;
             var def = TryGetDefaultMat();
             int solidSubmeshCount = Mathf.Max(1, solidSubmeshTriangles != null ? solidSubmeshTriangles.Length : 0);
-            bool showWire = EffectiveDisplayMode != DisplayMode.Solid;
-            var materials = new Material[solidSubmeshCount + (showWire ? 1 : 0)];
+            var materials = new Material[solidSubmeshCount];
 
             for (int submeshIndex = 0; submeshIndex < solidSubmeshCount; submeshIndex++) {
                 var existingSolid = (r.sharedMaterials != null && r.sharedMaterials.Length > submeshIndex) ? r.sharedMaterials[submeshIndex] : null;
@@ -116,25 +114,6 @@ namespace CunningEngine {
                 materials[submeshIndex] = solidMaterial;
             }
 
-            if (showWire) {
-                var wireMaterial = (r.sharedMaterials != null && r.sharedMaterials.Length > solidSubmeshCount && r.sharedMaterials[solidSubmeshCount] != null && r.sharedMaterials[solidSubmeshCount].shader == wire)
-                    ? r.sharedMaterials[solidSubmeshCount]
-                    : new Material(wire);
-                if (wireMaterial.HasProperty("_Surface")) wireMaterial.SetFloat("_Surface", 1f);
-                if (wireMaterial.HasProperty("_Blend")) wireMaterial.SetFloat("_Blend", 0f);
-                if (wireMaterial.HasProperty("_SrcBlend")) wireMaterial.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
-                if (wireMaterial.HasProperty("_DstBlend")) wireMaterial.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
-                if (wireMaterial.HasProperty("_Cull")) wireMaterial.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Off);
-                if (wireMaterial.HasProperty("_ZWrite")) wireMaterial.SetInt("_ZWrite", 0);
-                if (wireMaterial.HasProperty("_ZTest")) wireMaterial.SetInt("_ZTest", (int)UnityEngine.Rendering.CompareFunction.LessEqual);
-                if (wireMaterial.IsKeywordEnabled("_SURFACE_TYPE_TRANSPARENT") == false) wireMaterial.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
-                wireMaterial.color = EffectiveWireframeColor;
-                if (wireMaterial.HasProperty("_BaseColor")) wireMaterial.SetColor("_BaseColor", EffectiveWireframeColor);
-                if (wireMaterial.HasProperty("_Color")) wireMaterial.SetColor("_Color", EffectiveWireframeColor);
-                wireMaterial.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
-                materials[solidSubmeshCount] = wireMaterial;
-            }
-
             r.sharedMaterials = materials;
         }
 
@@ -143,8 +122,7 @@ namespace CunningEngine {
             if (mesh == null) return;
             DisplayMode effectiveDisplayMode = EffectiveDisplayMode;
             int solidSubmeshCount = Mathf.Max(1, solidSubmeshTriangles != null ? solidSubmeshTriangles.Length : 0);
-            bool showWire = effectiveDisplayMode != DisplayMode.Solid;
-            mesh.subMeshCount = solidSubmeshCount + (showWire ? 1 : 0);
+            mesh.subMeshCount = solidSubmeshCount;
             for (int submeshIndex = 0; submeshIndex < solidSubmeshCount; submeshIndex++) {
                 var indices = (effectiveDisplayMode == DisplayMode.Wire || solidSubmeshTriangles == null || submeshIndex >= solidSubmeshTriangles.Length)
                     ? Array.Empty<int>()
@@ -152,10 +130,10 @@ namespace CunningEngine {
                 mesh.SetIndices(indices, MeshTopology.Triangles, submeshIndex);
             }
 
-            if (showWire) {
-                mesh.SetIndices(lines ?? Array.Empty<int>(), MeshTopology.Lines, solidSubmeshCount);
-            }
             ApplyMaterials();
+#if UNITY_EDITOR
+            SceneView.RepaintAll();
+#endif
         }
 
         private void UpdateMesh() {
@@ -263,6 +241,9 @@ namespace CunningEngine {
         }
 
 #if UNITY_EDITOR
+        public bool EditorWantsWireOverlay => EffectiveDisplayMode != DisplayMode.Solid && lines != null && lines.Length >= 2;
+        public Color EditorWireOverlayColor => EffectiveWireframeColor;
+
         public void SetEditorSelectionHighlight(bool active, Color wireColor) {
             if (editorSelectionHighlightActive == active && editorSelectionWireColor.Equals(wireColor)) {
                 return;

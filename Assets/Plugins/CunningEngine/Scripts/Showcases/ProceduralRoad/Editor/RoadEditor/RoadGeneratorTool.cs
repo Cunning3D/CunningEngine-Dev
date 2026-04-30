@@ -11,6 +11,7 @@ using Sirenix.OdinInspector.Editor;
 using Sirenix.Utilities;
 using UnityEditor.SceneManagement;
 using UnityEngine.SceneManagement;
+using UnityEngine.Rendering;
 
 namespace Unity.Splines.Examples
 {
@@ -50,6 +51,7 @@ namespace UnityEditor.Splines.Extension
         private static bool showJunctionControls = true;
         private static bool showGizmos = true; // 添加显示Gizmo的控制变量
         private static bool showKnotPoints = true; // 添加显示knot点的控制变量
+        private static bool showBoundaryControlKnots = true;
         private const float GIZMO_SIZE = 7f;
         private static bool autoUpdateSamplePoints = false; // 控制是否自动更新采样点
         private static bool autoPreviewJunctions = false; // 自动预览路口
@@ -82,6 +84,9 @@ namespace UnityEditor.Splines.Extension
         private static readonly Color RoadTypeHoverBackgroundColor = new Color(0.16f, 0.17f, 0.19f, 1f);
         private static readonly Color RoadTypeBackgroundColor = new Color(0.13f, 0.14f, 0.15f, 1f);
         private static readonly Color RoadTypeBorderColor = new Color(1f, 1f, 1f, 0.08f);
+        private static readonly Color BoundaryControlRingColor = new Color(1f, 0.82f, 0.22f, 0.98f);
+        private static readonly Color BoundaryControlFillColor = new Color(1f, 0.78f, 0.18f, 0.2f);
+        private static readonly Color BoundaryControlLabelColor = new Color(1f, 0.95f, 0.75f, 0.98f);
 
         // 添加路段控制面板相关字段
         private static bool showRoadSegmentControls = true; // 路段控制面板折叠状态
@@ -328,6 +333,11 @@ namespace UnityEditor.Splines.Extension
                             }
                         }
                     }
+                }
+
+                if (showGizmos && showBoundaryControlKnots)
+                {
+                    DrawBoundaryControlKnotOverlay(roads);
                 }
                 
                 // 绘制已选择的连接点
@@ -719,6 +729,7 @@ namespace UnityEditor.Splines.Extension
                 
                 showGizmos = EditorGUILayout.Toggle("显示所有Gizmo", showGizmos);
                 showKnotPoints = EditorGUILayout.Toggle("显示路段端点", showKnotPoints);
+                showBoundaryControlKnots = EditorGUILayout.Toggle("显示路口边界控制点", showBoundaryControlKnots);
                 
                 GUI.enabled = showGizmos;
                 JunctionData.ShowGizmos = EditorGUILayout.Toggle("显示路口Gizmo", JunctionData.ShowGizmos);
@@ -934,6 +945,125 @@ namespace UnityEditor.Splines.Extension
 
             GUILayout.Space(4f);
             return selectedRoadType;
+        }
+
+        private static void DrawBoundaryControlKnotOverlay(IEnumerable<LoftRoadBehaviour> roads)
+        {
+            if (roads == null)
+            {
+                return;
+            }
+
+            CompareFunction previousZTest = Handles.zTest;
+            Color previousColor = Handles.color;
+            Handles.zTest = CompareFunction.LessEqual;
+
+            foreach (LoftRoadBehaviour road in roads)
+            {
+                IReadOnlyList<RoadMarker> markers = road?.RoadMarkers;
+                if (markers == null)
+                {
+                    continue;
+                }
+
+                for (int markerIndex = 0; markerIndex < markers.Count; markerIndex++)
+                {
+                    RoadMarker marker = markers[markerIndex];
+                    if (!ShouldDrawBoundaryControlMarker(marker)
+                        || !TryGetBoundaryControlMarkerWorldPosition(road, marker, out Vector3 worldPosition))
+                    {
+                        continue;
+                    }
+
+                    float size = HandleUtility.GetHandleSize(worldPosition) * 0.18f;
+                    Vector3[] diamond = new[]
+                    {
+                        worldPosition + Vector3.forward * size,
+                        worldPosition + Vector3.right * size,
+                        worldPosition - Vector3.forward * size,
+                        worldPosition - Vector3.right * size,
+                    };
+
+                    Handles.color = BoundaryControlFillColor;
+                    Handles.DrawAAConvexPolygon(diamond);
+
+                    Handles.color = BoundaryControlRingColor;
+                    Handles.DrawWireDisc(worldPosition, Vector3.up, size * 1.05f);
+                    Handles.DrawAAPolyLine(3f, new[]
+                    {
+                        diamond[0],
+                        diamond[1],
+                        diamond[2],
+                        diamond[3],
+                        diamond[0],
+                    });
+
+                    GUIStyle labelStyle = new GUIStyle(EditorStyles.miniBoldLabel)
+                    {
+                        normal = { textColor = BoundaryControlLabelColor },
+                        alignment = TextAnchor.MiddleCenter,
+                    };
+                    Handles.Label(worldPosition + Vector3.up * (size * 0.9f), GetBoundaryControlMarkerLabel(marker), labelStyle);
+                }
+            }
+
+            Handles.color = previousColor;
+            Handles.zTest = previousZTest;
+        }
+
+        private static bool ShouldDrawBoundaryControlMarker(RoadMarker marker)
+        {
+            return marker != null
+                && marker.kind == RoadMarkerKind.Junction
+                && marker.isPinnedToKnot
+                && marker.isGeneratedBoundaryControl;
+        }
+
+        private static bool TryGetBoundaryControlMarkerWorldPosition(
+            LoftRoadBehaviour road,
+            RoadMarker marker,
+            out Vector3 worldPosition)
+        {
+            worldPosition = Vector3.zero;
+            if (road?.Container?.Splines == null
+                || marker == null
+                || marker.splineIndex < 0
+                || marker.splineIndex >= road.Container.Splines.Count)
+            {
+                return false;
+            }
+
+            Spline spline = road.Container.Splines[marker.splineIndex];
+            if (spline == null || spline.Count == 0)
+            {
+                return false;
+            }
+
+            if (marker.isPinnedToKnot
+                && marker.preferredKnotIndex >= 0
+                && marker.preferredKnotIndex < spline.Count)
+            {
+                worldPosition = road.transform.TransformPoint(spline[marker.preferredKnotIndex].Position);
+                return true;
+            }
+
+            worldPosition = road.transform.TransformPoint(spline.EvaluatePosition(Mathf.Clamp01(marker.curveU)));
+            return true;
+        }
+
+        private static string GetBoundaryControlMarkerLabel(RoadMarker marker)
+        {
+            switch (marker.boundaryRole)
+            {
+                case RoadMarkerBoundaryRole.LowerCurveU:
+                    return "J-L";
+                case RoadMarkerBoundaryRole.UpperCurveU:
+                    return "J-U";
+                case RoadMarkerBoundaryRole.Endpoint:
+                    return "J-E";
+                default:
+                    return "J";
+            }
         }
 
         private static void EnsureRoadTypeSelectorStyles()

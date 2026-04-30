@@ -19,10 +19,6 @@ namespace CunningEngine {
 
         static int s_loaded; // 0=unknown,1=ok,-1=failed
         static string s_loadDiag;
-        static bool s_jobStatsApiAvailable = true;
-        static bool s_jobStatsApiWarned;
-        static bool s_extractPackedApiAvailable = true;
-        static bool s_extractPackedApiWarned;
 
         static NativeMethods() {
             try { EnsureLoaded(); } catch (Exception e) { Debug.LogWarning("CunningEngine: native preload failed: " + e.Message); }
@@ -248,21 +244,547 @@ namespace CunningEngine {
         [DllImport(DLL_NAME, CallingConvention = CC, CharSet = CharSet.Ansi)]
         public static extern uint cunning_cda_apply_edit_commands(ulong cda_id, string commands_json);
 
-        [DllImport(DLL_NAME, CallingConvention = CC)]
-        public static extern ulong cunning_cda_submit(ulong cda_id, ulong instance_id, ulong gen, string params_json, ulong[] input_handles, uint input_count);
+        public enum CunningStatus : uint {
+            Ok = 0,
+            InvalidArgument = 1,
+            InvalidContext = 2,
+            InvalidGraph = 3,
+            InvalidJob = 4,
+            InvalidValue = 5,
+            TypeMismatch = 6,
+            BufferTooSmall = 7,
+            Unsupported = 8,
+            ParseError = 9,
+            DeferredByBudget = 10,
+        }
 
-        [DllImport(DLL_NAME, CallingConvention = CC)]
-        public static extern ulong cunning_cda_submit_select(ulong cda_id, ulong instance_id, ulong gen, string params_json, ulong[] input_handles, uint input_count, string exports_json);
+        public enum CunningJobStatus : uint {
+            Invalid = 0,
+            Pending = 1,
+            Running = 2,
+            Ready = 3,
+            Cancelled = 4,
+            Failed = 5,
+        }
 
-        [DllImport(DLL_NAME, CallingConvention = CC)]
-        public static extern uint cunning_job_poll(ulong job_id);
+        public enum CunningRuntimeBackendMode : uint {
+            HostValueRegistry = 0,
+            StandaloneOwnedDevice = 1,
+            EngineHostedAdapter = 2,
+        }
+
+        public enum CunningCpuJitPolicy : uint {
+            Disabled = 0,
+            EditorAllowed = 1,
+            EditorRequired = 2,
+        }
+
+        public enum CunningFrameMode : uint {
+            Editor = 0,
+            GameRuntime = 1,
+        }
+
+        public enum CunningGpuExecutionModel : uint {
+            StandaloneBringUp = 0,
+            EngineHostedQueueInterlocked = 1,
+            EngineHostedCommandRecording = 2,
+        }
+
+        public enum CunningKernelSourceKind : uint {
+            Wgsl = 1,
+            Hlsl = 2,
+        }
+
+        public enum CunningGpuResourceKind : uint {
+            Buffer = 1,
+            Field = 2,
+        }
+
+        public enum CunningGpuFieldDimension : uint {
+            D1 = 0,
+            D2 = 1,
+            D3 = 2,
+        }
+
+        public enum CunningGpuFieldStorageMode : uint {
+            Dense = 0,
+            SparseTiled = 1,
+        }
+
+        public enum CunningValueKind : uint {
+            Invalid = 0,
+            Geometry = 1,
+            Param = 2,
+            GpuBuffer = 3,
+            GpuField = 4,
+            GpuGeometry = 5,
+            Diagnostics = 6,
+        }
+
+        public enum CunningMaterializeHostKind : uint {
+            GeometryHandle = 1,
+            Utf8Json = 2,
+        }
+
+        public enum CunningGpuFieldLayerSemantic : uint {
+            Height = 0,
+            Mask = 1,
+            Water = 2,
+            Sediment = 3,
+            Debris = 4,
+            Velocity = 5,
+            Temperature = 6,
+            Density = 7,
+            Custom = 8,
+        }
+
+        public enum CunningGpuFieldChannelFormat : uint {
+            R8Uint = 0,
+            R16Uint = 1,
+            R16Float = 2,
+            R32Uint = 3,
+            R32Float = 4,
+            Rg16Float = 5,
+            Rg32Float = 6,
+            Rgba16Float = 7,
+            Rgba32Float = 8,
+        }
 
         [StructLayout(LayoutKind.Sequential)]
-        public struct JobStats {
-            public uint status;
-            public ulong submitted_ms, started_ms, finished_ms, compute_ms;
-            public ulong out_handle;
+        public struct CunningRuntimeCreateDesc {
+            public uint backend_mode;
+            public IntPtr host_gpu_backend;
+            public uint cpu_jit_policy;
         }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct CunningGpuCapabilities {
+            public uint max_workgroup_size_x;
+            public uint max_workgroup_size_y;
+            public uint max_workgroup_size_z;
+            public uint max_bind_groups;
+            public uint max_storage_buffers_per_stage;
+            public uint max_shared_memory_size;
+            public uint subgroup_size;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct CunningGpuMemoryBudget {
+            public ulong budget_bytes;
+            public ulong available_bytes;
+            public ulong dedicated_bytes;
+            public ulong shared_bytes;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct CunningGpuSyncPoint {
+            public uint queue_class;
+            public ulong timeline_value;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct CunningKernelBindingDesc {
+            public uint binding;
+            public uint read_only;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct CunningKernelModuleDesc {
+            public IntPtr label;
+            public IntPtr entry_point;
+            public uint source_kind;
+            public IntPtr source_utf8;
+            public IntPtr bindings;
+            public uint binding_count;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct CunningGpuBufferDesc {
+            public IntPtr label;
+            public ulong size_bytes;
+            public uint stride_bytes;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct CunningGpuFieldLayerDesc {
+            public IntPtr name;
+            public uint semantic;
+            public uint format;
+            public float default_clear_x;
+            public float default_clear_y;
+            public float default_clear_z;
+            public float default_clear_w;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct CunningGpuFieldDesc {
+            public IntPtr label;
+            public uint dim_x;
+            public uint dim_y;
+            public uint dim_z;
+            public uint channels;
+            public uint bytes_per_channel;
+            public uint dimension;
+            public uint tile_x;
+            public uint tile_y;
+            public uint tile_z;
+            public uint channel_format;
+            public uint storage_mode;
+            public CunningGpuFieldWorldTransform world_transform;
+            public IntPtr layers;
+            public uint layer_count;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct CunningGpuBindingSetDesc {
+            public IntPtr buffers;
+            public uint buffer_count;
+            public IntPtr fields;
+            public uint field_count;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct CunningGpuSubmissionDesc {
+            public ulong kernel;
+            public CunningGpuBindingSetDesc bindings;
+            public uint dim_x;
+            public uint dim_y;
+            public uint dim_z;
+            public IntPtr wait_sync_points;
+            public uint wait_sync_count;
+            public uint has_signal;
+            public CunningGpuSyncPoint signal;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct CunningGpuRecordingDesc {
+            public ulong kernel;
+            public CunningGpuBindingSetDesc bindings;
+            public uint dim_x;
+            public uint dim_y;
+            public uint dim_z;
+            public ulong host_recording_token;
+            public IntPtr wait_sync_points;
+            public uint wait_sync_count;
+            public uint has_signal;
+            public CunningGpuSyncPoint signal;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct CunningGpuReadbackRequest {
+            public uint resource_kind;
+            public ulong resource_handle;
+            public ulong offset;
+            public ulong size_bytes;
+            public uint has_fence;
+            public ulong fence;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct CunningGpuResidencyTransitionDesc {
+            public uint resource_kind;
+            public ulong resource_handle;
+            public uint has_field_range;
+            public uint layer_start;
+            public uint layer_count;
+            public uint mip_start;
+            public uint mip_count;
+            public uint region_origin_x;
+            public uint region_origin_y;
+            public uint region_origin_z;
+            public uint region_extent_x;
+            public uint region_extent_y;
+            public uint region_extent_z;
+            public ulong bytes;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct CunningHostGpuImportBufferDesc {
+            public ulong host_resource;
+            public uint backend_identity;
+            public ulong queue_token;
+            public ulong size_bytes;
+            public uint stride_bytes;
+            public uint ownership;
+            public uint state;
+            public IntPtr wait_sync_points;
+            public uint wait_sync_count;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct CunningHostGpuImportFieldDesc {
+            public ulong host_resource;
+            public uint backend_identity;
+            public ulong queue_token;
+            public uint dim_x;
+            public uint dim_y;
+            public uint dim_z;
+            public uint channels;
+            public uint bytes_per_channel;
+            public uint dimension;
+            public uint tile_x;
+            public uint tile_y;
+            public uint tile_z;
+            public uint channel_format;
+            public uint storage_mode;
+            public CunningGpuFieldWorldTransform world_transform;
+            public IntPtr layers;
+            public uint layer_count;
+            public uint ownership;
+            public uint state;
+            public IntPtr wait_sync_points;
+            public uint wait_sync_count;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct CunningHostGpuExportBufferDesc {
+            public uint backend_identity;
+            public ulong queue_token;
+            public uint state;
+            public uint ownership;
+            public IntPtr wait_sync_points;
+            public uint wait_sync_count;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct CunningHostGpuExportFieldDesc {
+            public uint backend_identity;
+            public ulong queue_token;
+            public uint state;
+            public uint ownership;
+            public uint layer_start;
+            public uint layer_count;
+            public uint mip_start;
+            public uint mip_count;
+            public uint region_origin_x;
+            public uint region_origin_y;
+            public uint region_origin_z;
+            public uint region_extent_x;
+            public uint region_extent_y;
+            public uint region_extent_z;
+            public IntPtr wait_sync_points;
+            public uint wait_sync_count;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct CunningHostGpuExportBuffer {
+            public ulong host_resource;
+            public uint has_signal;
+            public CunningGpuSyncPoint signal;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct CunningHostGpuExportField {
+            public ulong host_resource;
+            public uint has_signal;
+            public CunningGpuSyncPoint signal;
+        }
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public delegate CunningStatus HostGpuMemoryBudgetFn(IntPtr userData, IntPtr outBudget);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public delegate CunningStatus HostGpuResolveBridgeFn(IntPtr userData, IntPtr outBridgeHandle);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public delegate CunningStatus HostGpuResolveTokenBridgeFn(IntPtr userData, ulong token, IntPtr outBridgeHandle);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public delegate CunningStatus HostGpuCompileModuleFn(IntPtr userData, IntPtr desc, IntPtr outHandle);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public delegate CunningStatus HostGpuCreateBufferFn(IntPtr userData, IntPtr desc, IntPtr outHandle);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public delegate CunningStatus HostGpuWriteBufferFn(IntPtr userData, ulong handle, ulong offset, IntPtr bytes, ulong byteLen);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public delegate CunningStatus HostGpuCreateFieldFn(IntPtr userData, IntPtr desc, IntPtr outHandle);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public delegate CunningStatus HostGpuImportBufferFn(IntPtr userData, IntPtr desc, IntPtr outHandle);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public delegate CunningStatus HostGpuExportBufferFn(IntPtr userData, ulong handle, IntPtr desc, IntPtr outExport);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public delegate CunningStatus HostGpuImportFieldFn(IntPtr userData, IntPtr desc, IntPtr outHandle);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public delegate CunningStatus HostGpuExportFieldFn(IntPtr userData, ulong handle, IntPtr desc, IntPtr outExport);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public delegate CunningStatus HostGpuResidencyFn(IntPtr userData, IntPtr desc);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public delegate CunningStatus HostGpuCreateFenceFn(IntPtr userData, IntPtr label, IntPtr outFence);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public delegate CunningStatus HostGpuSubmitFn(IntPtr userData, IntPtr desc, IntPtr outFence);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public delegate CunningStatus HostGpuRecordIntoHostFn(IntPtr userData, IntPtr desc, IntPtr outFence);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public delegate CunningStatus HostGpuReadbackFn(IntPtr userData, IntPtr desc, IntPtr outBytes, IntPtr inoutLen, IntPtr outFence, IntPtr outHasFence);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public delegate CunningStatus HostGpuPollFenceFn(IntPtr userData, ulong fence, IntPtr outCompleted);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public delegate CunningStatus HostGpuAwaitFenceFn(IntPtr userData, ulong fence);
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct CunningHostGpuBackendCallbacks {
+            public IntPtr user_data;
+            public uint execution_model;
+            public CunningGpuCapabilities capabilities;
+            public CunningGpuMemoryBudget initial_memory_budget;
+            public IntPtr memory_budget;
+            public IntPtr resolve_rust_wgpu_device_queue_bridge;
+            public IntPtr resolve_rust_relax_v7_host_recording_bridge;
+            public IntPtr resolve_rust_relax_v7_execution_object_bridge;
+            public IntPtr compile_module;
+            public IntPtr create_buffer;
+            public IntPtr write_buffer;
+            public IntPtr create_field;
+            public IntPtr import_buffer;
+            public IntPtr export_buffer;
+            public IntPtr import_field;
+            public IntPtr export_field;
+            public IntPtr evict_resource;
+            public IntPtr rehydrate_resource;
+            public IntPtr create_fence;
+            public IntPtr submit;
+            public IntPtr record_into_host;
+            public IntPtr readback;
+            public IntPtr poll_fence;
+            public IntPtr await_fence;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct CunningFrameDesc {
+            public ulong frame_index;
+            public ulong cpu_deadline_ns;
+            public ulong gpu_deadline_ns;
+            public ulong gpu_budget_bytes;
+            public ulong latency_lane_cpu_ns;
+            public ulong latency_lane_gpu_ns;
+            public ulong latency_lane_reserved_bytes;
+            public ulong throughput_lane_cpu_ns;
+            public ulong throughput_lane_gpu_ns;
+            public ulong throughput_lane_budget_bytes;
+            public ulong background_lane_cpu_ns;
+            public ulong background_lane_gpu_ns;
+            public ulong background_lane_budget_bytes;
+            public uint mode;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct CunningJobSnapshot {
+            public uint status;
+            public ulong submitted_ms;
+            public ulong started_ms;
+            public ulong finished_ms;
+            public ulong compute_ms;
+            public ulong primary_output_geometry_handle;
+            public uint output_count;
+            public uint reserved;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct CunningGpuFieldWorldTransform {
+            public float origin_x, origin_y, origin_z;
+            public float basis_x_x, basis_x_y, basis_x_z;
+            public float basis_y_x, basis_y_y, basis_y_z;
+            public float basis_z_x, basis_z_y, basis_z_z;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct CunningGpuFieldInfo {
+            public uint dim_x;
+            public uint dim_y;
+            public uint dim_z;
+            public uint channels;
+            public uint bytes_per_channel;
+            public uint dimension;
+            public uint tile_x;
+            public uint tile_y;
+            public uint tile_z;
+            public uint channel_format;
+            public uint storage_mode;
+            public CunningGpuFieldWorldTransform world_transform;
+            public uint layer_count;
+            public ulong estimated_bytes;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct CunningGpuFieldLayerInfo {
+            public uint semantic;
+            public uint format;
+            public float default_clear_x;
+            public float default_clear_y;
+            public float default_clear_z;
+            public float default_clear_w;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct CunningGpuFieldLayerReadbackDesc {
+            public uint layer_index;
+            public uint origin_x, origin_y, origin_z;
+            public uint extent_x, extent_y, extent_z;
+            public IntPtr out_f32;
+            public uint out_count;
+            public IntPtr out_required_count;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct CunningHostGeometryDesc {
+            public ulong handle;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct CunningMaterializeHostDesc {
+            public CunningMaterializeHostKind kind;
+            public IntPtr out_handle;
+            public IntPtr out_buf;
+            public uint cap;
+            public IntPtr out_len;
+        }
+
+        [DllImport(DLL_NAME, CallingConvention = CC)]
+        public static extern ulong cunning_runtime_create(ref CunningRuntimeCreateDesc desc);
+
+        [DllImport(DLL_NAME, CallingConvention = CC)]
+        public static extern void cunning_runtime_destroy(ulong ctx);
+
+        [DllImport(DLL_NAME, CallingConvention = CC)]
+        public static extern CunningStatus cunning_runtime_begin_frame(ulong ctx, ref CunningFrameDesc desc);
+
+        [DllImport(DLL_NAME, CallingConvention = CC)]
+        public static extern void cunning_runtime_end_frame(ulong ctx);
+
+        [DllImport(DLL_NAME, CallingConvention = CC, CharSet = CharSet.Ansi)]
+        public static extern uint cunning_runtime_get_last_error(StringBuilder out_buf, uint cap);
+
+        [DllImport(DLL_NAME, CallingConvention = CC)]
+        public static extern ulong cunning_cda_submit_values(ulong ctx, ulong cda_id, ulong instance_id, ulong gen, string params_json, ulong[] input_values, uint input_count);
+
+        [DllImport(DLL_NAME, CallingConvention = CC, EntryPoint = "cunning_job_poll_runtime")]
+        public static extern CunningJobStatus cunning_job_poll_runtime(ulong ctx, ulong job_id, out CunningJobSnapshot out_snapshot);
+
+        [DllImport(DLL_NAME, CallingConvention = CC)]
+        public static extern void cunning_job_cancel_runtime(ulong ctx, ulong job_id);
+
+        [DllImport(DLL_NAME, CallingConvention = CC)]
+        public static extern uint cunning_job_output_count(ulong ctx, ulong job_id);
+
+        [DllImport(DLL_NAME, CallingConvention = CC)]
+        public static extern CunningStatus cunning_job_output_value(ulong ctx, ulong job_id, uint index, out ulong out_value);
+
+        [DllImport(DLL_NAME, CallingConvention = CC)]
+        public static extern ulong cunning_value_import_geometry(ulong ctx, ref CunningHostGeometryDesc desc);
+
+        [DllImport(DLL_NAME, CallingConvention = CC)]
+        public static extern CunningValueKind cunning_value_kind(ulong ctx, ulong value);
+
+        [DllImport(DLL_NAME, CallingConvention = CC)]
+        public static extern void cunning_value_release(ulong ctx, ulong value);
+
+        [DllImport(DLL_NAME, CallingConvention = CC)]
+        public static extern CunningStatus cunning_value_materialize_host(ulong ctx, ulong value, ref CunningMaterializeHostDesc desc);
+
+        [DllImport(DLL_NAME, CallingConvention = CC)]
+        public static extern CunningStatus cunning_value_gpu_field_get_info(ulong ctx, ulong value, out CunningGpuFieldInfo out_info);
+
+        [DllImport(DLL_NAME, CallingConvention = CC)]
+        public static extern CunningStatus cunning_value_gpu_field_get_layer_info(ulong ctx, ulong value, uint layer_index, out CunningGpuFieldLayerInfo out_info);
+
+        [DllImport(DLL_NAME, CallingConvention = CC)]
+        public static extern CunningStatus cunning_value_materialize_gpu_field_layer_f32(ulong ctx, ulong value, ref CunningGpuFieldLayerReadbackDesc desc);
 
         [StructLayout(LayoutKind.Sequential)]
         public struct GeoRenderVertex {
@@ -287,42 +809,6 @@ namespace CunningEngine {
             public uint dirty_vertex_start;
             public uint dirty_vertex_count;
         }
-
-        [DllImport(DLL_NAME, CallingConvention = CC)]
-        public static extern uint cunning_job_get_stats(ulong job_id, out JobStats out_stats);
-
-        public static bool TryGetJobStats(ulong jobId, out JobStats stats) {
-            stats = default;
-            if (jobId == 0 || !s_jobStatsApiAvailable) return false;
-            try {
-                return cunning_job_get_stats(jobId, out stats) != 0;
-            } catch (EntryPointNotFoundException) {
-                s_jobStatsApiAvailable = false;
-                if (!s_jobStatsApiWarned) {
-                    s_jobStatsApiWarned = true;
-                    Debug.LogWarning("CunningEngine: Native API missing: cunning_job_get_stats (rebuild native DLL).");
-                }
-                return false;
-            }
-        }
-
-        [DllImport(DLL_NAME, CallingConvention = CC)]
-        public static extern uint cunning_job_cancel(ulong job_id);
-
-        [DllImport(DLL_NAME, CallingConvention = CC)]
-        public static extern uint cunning_job_get_output_count(ulong job_id);
-
-        [DllImport(DLL_NAME, CallingConvention = CC)]
-        public static extern ulong cunning_job_get_output_handle(ulong job_id, uint index);
-
-        [DllImport(DLL_NAME, CallingConvention = CC)]
-        public static extern uint cunning_job_get_output_kind(ulong job_id, uint index);
-
-        [DllImport(DLL_NAME, CallingConvention = CC)]
-        public static extern ulong cunning_job_get_output_geo_handle(ulong job_id, uint index);
-
-        [DllImport(DLL_NAME, CallingConvention = CC, CharSet = CharSet.Ansi)]
-        public static extern uint cunning_job_get_output_param_json(ulong job_id, uint index, StringBuilder out_buf, uint cap);
 
         [DllImport(DLL_NAME, CallingConvention = CC)]
         public static extern uint cunning_cda_get_export_count(ulong cda_id);
@@ -455,18 +941,9 @@ namespace CunningEngine {
 
         public static bool TryGeoExtractPacked(ulong handle, string packedId, out ulong outHandle) {
             outHandle = 0;
-            if (handle == 0 || string.IsNullOrEmpty(packedId) || !s_extractPackedApiAvailable) return false;
-            try {
-                outHandle = cunning_geo_extract_packed(handle, packedId);
-                return outHandle != 0;
-            } catch (EntryPointNotFoundException) {
-                s_extractPackedApiAvailable = false;
-                if (!s_extractPackedApiWarned) {
-                    s_extractPackedApiWarned = true;
-                    Debug.LogWarning("CunningEngine: Native API missing: cunning_geo_extract_packed (rebuild native DLL).");
-                }
-                return false;
-            }
+            if (handle == 0 || string.IsNullOrEmpty(packedId)) return false;
+            outHandle = cunning_geo_extract_packed(handle, packedId);
+            return outHandle != 0;
         }
 
         // --- Geometry Attributes (host reads what it needs) ---

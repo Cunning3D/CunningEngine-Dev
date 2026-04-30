@@ -58,7 +58,7 @@ namespace Unity.Splines.Examples
             for (int index = 0; index < logicalSegments.Count; index++)
             {
                 LogicalSegmentDef segmentDef = logicalSegments[index];
-                if (!segmentDef.IsValid)
+                if (!segmentDef.IsValid || IsJunctionInteriorSegment(segmentDef))
                 {
                     continue;
                 }
@@ -705,7 +705,7 @@ namespace Unity.Splines.Examples
 
             for (int knotIndex = 0; knotIndex < spline.Count; knotIndex++)
             {
-                float knotCurveU = spline.Count <= 1 ? 0f : knotIndex / (float)(spline.Count - 1);
+                float knotCurveU = ComputeKnotCurveU(spline, knotIndex);
                 if (Mathf.Abs(knotCurveU - curveU) <= SegmentRuntimeCurveUEpsilon)
                 {
                     return knotIndex;
@@ -722,13 +722,13 @@ namespace Unity.Splines.Examples
                 return 0;
             }
 
-            int curveCount = spline.Count - 1;
-            return Mathf.Clamp(Mathf.FloorToInt(Mathf.Clamp01(curveU) * curveCount), 0, curveCount - 1);
+            int curveIndex = spline.SplineToCurveT(Mathf.Clamp01(curveU), out _);
+            return Mathf.Clamp(curveIndex, 0, spline.Count - 2);
         }
 
         private void BuildLaneDataForSegment(int splineIndex, LoftRoadExtensionData roadData, Spline spline, LogicalSegmentDef segmentDef)
         {
-            if (roadData == null || spline == null || !segmentDef.IsValid)
+            if (roadData == null || spline == null || !segmentDef.IsValid || IsJunctionInteriorSegment(segmentDef))
             {
                 return;
             }
@@ -848,7 +848,7 @@ namespace Unity.Splines.Examples
             for (int segmentIndex = 0; segmentIndex < logicalSegments.Count; segmentIndex++)
             {
                 LogicalSegmentDef segmentDef = logicalSegments[segmentIndex];
-                if (!segmentDef.IsValid)
+                if (!segmentDef.IsValid || IsJunctionInteriorSegment(segmentDef))
                 {
                     continue;
                 }
@@ -863,7 +863,7 @@ namespace Unity.Splines.Examples
                 AppendSamplePoint(tempPoints, roadIndex, splineIndex, spline, width, segmentDef, segmentDef.startCurveU, true);
                 for (int knotIndex = 0; knotIndex < spline.Count; knotIndex++)
                 {
-                    float knotCurveU = spline.Count <= 1 ? 0f : knotIndex / (float)(spline.Count - 1);
+                    float knotCurveU = ComputeKnotCurveU(spline, knotIndex);
                     if (knotCurveU <= segmentDef.startCurveU + SegmentRuntimeCurveUEpsilon
                         || knotCurveU >= segmentDef.endCurveU - SegmentRuntimeCurveUEpsilon)
                     {
@@ -922,7 +922,7 @@ namespace Unity.Splines.Examples
             curveU = Mathf.Clamp01(curveU);
             int originalKnotIndex = ResolveKnotIndexAtCurveU(spline, curveU, -1);
             bool isOriginalKnot = originalKnotIndex >= 0 && originalKnotIndex < spline.Count
-                && Mathf.Abs((spline.Count <= 1 ? 0f : originalKnotIndex / (float)(spline.Count - 1)) - curveU) <= SegmentRuntimeCurveUEpsilon;
+                && Mathf.Abs(ComputeKnotCurveU(spline, originalKnotIndex) - curveU) <= SegmentRuntimeCurveUEpsilon;
 
             bool isSegmentBoundary = preferBoundary
                 || Mathf.Abs(curveU - segmentDef.startCurveU) <= SegmentRuntimeCurveUEpsilon
@@ -948,7 +948,7 @@ namespace Unity.Splines.Examples
 
         private void AppendOuterSidewalkEdgeLinesForSegment(List<(Vector3 start, Vector3 end)> edgeLines, int splineIndex, LoftRoadExtensionData roadData, Spline spline, LogicalSegmentDef segmentDef)
         {
-            if (edgeLines == null || roadData == null || spline == null || !segmentDef.IsValid)
+            if (edgeLines == null || roadData == null || spline == null || !segmentDef.IsValid || IsJunctionInteriorSegment(segmentDef))
             {
                 return;
             }

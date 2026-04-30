@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Splines;
+using Unity.Mathematics;
 
 namespace Unity.Splines.Examples
 {
@@ -20,6 +21,14 @@ namespace Unity.Splines.Examples
         ManualCut = 2,
     }
 
+    public enum RoadMarkerBoundaryRole
+    {
+        None = 0,
+        LowerCurveU = 1,
+        UpperCurveU = 2,
+        Endpoint = 3,
+    }
+
     [Serializable]
     public sealed class RoadMarker
     {
@@ -32,6 +41,8 @@ namespace Unity.Splines.Examples
         public bool isPinnedToKnot;
         public JunctionData junctionRef;
         public bool isEndpointBoundary;
+        public bool isGeneratedBoundaryControl;
+        public RoadMarkerBoundaryRole boundaryRole;
     }
 
     [Serializable]
@@ -156,7 +167,7 @@ namespace Unity.Splines.Examples
             }
         }
 
-        internal IReadOnlyList<RoadMarker> RoadMarkers => m_RoadMarkers;
+        public IReadOnlyList<RoadMarker> RoadMarkers => m_RoadMarkers;
 
         internal IReadOnlyList<LogicalSegmentDef> GetLogicalSegments(int splineIndex)
         {
@@ -213,7 +224,7 @@ namespace Unity.Splines.Examples
                 return Mathf.Clamp(marker.preferredKnotIndex, 0, spline.Count - 1);
             }
 
-            return Mathf.Clamp(Mathf.RoundToInt(Mathf.Clamp01(marker.curveU) * Mathf.Max(1, spline.Count - 1)), 0, spline.Count - 1);
+            return ResolveKnotIndexAtCurveU(spline, marker.curveU, Mathf.Clamp(marker.preferredKnotIndex, 0, spline.Count - 1));
         }
 
         internal bool TryResolveConnectedRoadBinding(
@@ -319,10 +330,23 @@ namespace Unity.Splines.Examples
             knotIndex = Mathf.Clamp(knotIndex, 0, spline.Count - 1);
             float curveU = ComputeKnotCurveU(spline, knotIndex);
             bool isEndpoint = knotIndex == 0 || knotIndex == spline.Count - 1;
-            return EnsureJunctionMarkerInternal(splineIndex, knotIndex, curveU, true, isEndpoint, junction);
+            return EnsureJunctionMarkerInternal(
+                splineIndex,
+                knotIndex,
+                curveU,
+                true,
+                isEndpoint,
+                junction,
+                false,
+                isEndpoint ? RoadMarkerBoundaryRole.Endpoint : RoadMarkerBoundaryRole.None);
         }
 
-        internal long EnsureJunctionMarkerAtCurveU(int splineIndex, float curveU, JunctionData junction)
+        internal long EnsureJunctionMarkerAtCurveU(
+            int splineIndex,
+            float curveU,
+            JunctionData junction,
+            bool isGeneratedBoundaryControl = false,
+            RoadMarkerBoundaryRole boundaryRole = RoadMarkerBoundaryRole.None)
         {
             if (LoftSplines == null || splineIndex < 0 || splineIndex >= LoftSplines.Count)
             {
@@ -336,7 +360,7 @@ namespace Unity.Splines.Examples
             }
 
             float clampedCurveU = Mathf.Clamp01(curveU);
-            int preferredKnotIndex = ResolveKnotIndexAtCurveU(spline, clampedCurveU, Mathf.RoundToInt(clampedCurveU * Mathf.Max(1, spline.Count - 1)));
+            int preferredKnotIndex = ResolveFallbackKnotIndexForCurveU(spline, clampedCurveU);
             bool isEndpoint = clampedCurveU <= SegmentCurveUEpsilon || clampedCurveU >= 1f - SegmentCurveUEpsilon;
             bool isPinnedToKnot = isEndpoint;
             if (isPinnedToKnot)
@@ -345,7 +369,132 @@ namespace Unity.Splines.Examples
                 clampedCurveU = ComputeKnotCurveU(spline, preferredKnotIndex);
             }
 
-            return EnsureJunctionMarkerInternal(splineIndex, preferredKnotIndex, clampedCurveU, isPinnedToKnot, isEndpoint, junction);
+            return EnsureJunctionMarkerInternal(
+                splineIndex,
+                preferredKnotIndex,
+                clampedCurveU,
+                isPinnedToKnot,
+                isEndpoint,
+                junction,
+                isGeneratedBoundaryControl,
+                ResolveMarkerBoundaryRole(isEndpoint, boundaryRole, clampedCurveU));
+        }
+
+        internal long EnsureJunctionMarkerAtWorldPosition(
+            int splineIndex,
+            Vector3 worldPosition,
+            float fallbackCurveU,
+            JunctionData junction,
+            bool requirePinnedKnot = false,
+            bool isGeneratedBoundaryControl = false,
+            RoadMarkerBoundaryRole boundaryRole = RoadMarkerBoundaryRole.None)
+        {
+            if (LoftSplines == null || splineIndex < 0 || splineIndex >= LoftSplines.Count)
+            {
+                return 0;
+            }
+
+            Spline spline = LoftSplines[splineIndex];
+            if (spline == null || spline.Count <= 0)
+            {
+                return 0;
+            }
+
+            if (TryResolveBoundaryKnotAtWorldPosition(splineIndex, worldPosition, out int knotIndex))
+            {
+                knotIndex = Mathf.Clamp(knotIndex, 0, spline.Count - 1);
+                bool isEndpoint = knotIndex == 0 || knotIndex == spline.Count - 1;
+                return EnsureJunctionMarkerInternal(
+                    splineIndex,
+                    knotIndex,
+                    ComputeKnotCurveU(spline, knotIndex),
+                    true,
+                    isEndpoint,
+                    junction,
+                    isGeneratedBoundaryControl,
+                    ResolveMarkerBoundaryRole(isEndpoint, boundaryRole, ComputeKnotCurveU(spline, knotIndex)));
+            }
+
+            if (requirePinnedKnot)
+            {
+                Vector3 fallbackWorldPosition = transform.TransformPoint(spline.EvaluatePosition(Mathf.Clamp01(fallbackCurveU)));
+                if (TryResolveBoundaryKnotAtWorldPosition(splineIndex, fallbackWorldPosition, out int fallbackKnotIndex))
+                {
+                    fallbackKnotIndex = Mathf.Clamp(fallbackKnotIndex, 0, spline.Count - 1);
+                    bool isEndpoint = fallbackKnotIndex == 0 || fallbackKnotIndex == spline.Count - 1;
+                    return EnsureJunctionMarkerInternal(
+                        splineIndex,
+                        fallbackKnotIndex,
+                        ComputeKnotCurveU(spline, fallbackKnotIndex),
+                        true,
+                        isEndpoint,
+                        junction,
+                        isGeneratedBoundaryControl,
+                        ResolveMarkerBoundaryRole(isEndpoint, boundaryRole, ComputeKnotCurveU(spline, fallbackKnotIndex)));
+                }
+
+                return 0;
+            }
+
+            return EnsureJunctionMarkerAtCurveU(splineIndex, fallbackCurveU, junction, isGeneratedBoundaryControl, boundaryRole);
+        }
+
+        internal bool TryResolveSplineTargetAtCurveU(
+            int splineIndex,
+            float resolvedCurveU,
+            out int existingKnotIndex,
+            out int curveIndex,
+            out float localT)
+        {
+            existingKnotIndex = -1;
+            curveIndex = -1;
+            localT = -1f;
+            if (LoftSplines == null || splineIndex < 0 || splineIndex >= LoftSplines.Count)
+            {
+                return false;
+            }
+
+            Spline spline = LoftSplines[splineIndex];
+            return spline != null && TryResolveSplineTargetAtCurveU(spline, resolvedCurveU, out existingKnotIndex, out curveIndex, out localT);
+        }
+
+        internal long EnsureJunctionMarkerAtResolvedSplineTarget(
+            int splineIndex,
+            float resolvedCurveU,
+            int resolvedCurveIndex,
+            float resolvedLocalT,
+            JunctionData junction,
+            bool isGeneratedBoundaryControl = false,
+            RoadMarkerBoundaryRole boundaryRole = RoadMarkerBoundaryRole.None)
+        {
+            if (LoftSplines == null || splineIndex < 0 || splineIndex >= LoftSplines.Count)
+            {
+                return 0;
+            }
+
+            Spline spline = LoftSplines[splineIndex];
+            if (spline == null || spline.Count <= 0)
+            {
+                return 0;
+            }
+
+            if (!TryResolveBoundaryKnotAtCurveU(splineIndex, resolvedCurveU, resolvedCurveIndex, resolvedLocalT, out int knotIndex))
+            {
+                return 0;
+            }
+
+            knotIndex = Mathf.Clamp(knotIndex, 0, spline.Count - 1);
+            bool isEndpoint = knotIndex == 0 || knotIndex == spline.Count - 1;
+            float knotCurveU = ComputeKnotCurveU(spline, knotIndex);
+            return EnsureJunctionMarkerInternal(
+                splineIndex,
+                knotIndex,
+                knotCurveU,
+                true,
+                isEndpoint,
+                junction,
+                isGeneratedBoundaryControl,
+                ResolveMarkerBoundaryRole(isEndpoint, boundaryRole, knotCurveU));
         }
 
         internal void RemoveJunctionMarkersForJunction(JunctionData junction, int splineIndex = -1)
@@ -385,13 +534,70 @@ namespace Unity.Splines.Examples
             EditorUtility.SetDirty(this);
         }
 
+        internal void RemoveUnusedJunctionMarkersForJunction(
+            JunctionData junction,
+            int splineIndex,
+            IReadOnlyCollection<long> usedMarkerIds)
+        {
+            if (junction == null || splineIndex < 0 || m_RoadMarkers == null || m_RoadMarkers.Count == 0)
+            {
+                return;
+            }
+
+            bool removedAny = false;
+            for (int markerIndex = m_RoadMarkers.Count - 1; markerIndex >= 0; markerIndex--)
+            {
+                RoadMarker marker = m_RoadMarkers[markerIndex];
+                if (marker == null
+                    || marker.kind != RoadMarkerKind.Junction
+                    || marker.junctionRef != junction
+                    || marker.splineIndex != splineIndex)
+                {
+                    continue;
+                }
+
+                bool isUsedMarker = false;
+                if (usedMarkerIds != null)
+                {
+                    foreach (long usedMarkerId in usedMarkerIds)
+                    {
+                        if (usedMarkerId != marker.markerId)
+                        {
+                            continue;
+                        }
+
+                        isUsedMarker = true;
+                        break;
+                    }
+                }
+
+                if (isUsedMarker)
+                {
+                    continue;
+                }
+
+                m_RoadMarkers.RemoveAt(markerIndex);
+                removedAny = true;
+            }
+
+            if (!removedAny)
+            {
+                return;
+            }
+
+            RebuildSplineSemanticCache(splineIndex);
+            EditorUtility.SetDirty(this);
+        }
+
         private long EnsureJunctionMarkerInternal(
             int splineIndex,
             int preferredKnotIndex,
             float curveU,
             bool isPinnedToKnot,
             bool isEndpoint,
-            JunctionData junction)
+            JunctionData junction,
+            bool isGeneratedBoundaryControl,
+            RoadMarkerBoundaryRole boundaryRole)
         {
             if (LoftSplines == null || splineIndex < 0 || splineIndex >= LoftSplines.Count)
             {
@@ -407,6 +613,7 @@ namespace Unity.Splines.Examples
             EnsureRoadId();
             preferredKnotIndex = Mathf.Clamp(preferredKnotIndex, 0, spline.Count - 1);
             curveU = isPinnedToKnot ? ComputeKnotCurveU(spline, preferredKnotIndex) : Mathf.Clamp01(curveU);
+            boundaryRole = ResolveMarkerBoundaryRole(isEndpoint, boundaryRole, curveU);
 
             RoadMarker marker = null;
             for (int index = 0; index < m_RoadMarkers.Count; index++)
@@ -419,11 +626,45 @@ namespace Unity.Splines.Examples
 
                 if (candidate.junctionRef == junction)
                 {
-                    marker = candidate;
-                    break;
+                    if (candidate.isGeneratedBoundaryControl != isGeneratedBoundaryControl)
+                    {
+                        continue;
+                    }
+
+                    if (isGeneratedBoundaryControl)
+                    {
+                        bool sameBoundaryRole = candidate.boundaryRole == boundaryRole;
+                        if (sameBoundaryRole
+                            && (boundaryRole != RoadMarkerBoundaryRole.Endpoint
+                                || (candidate.curveU >= 0.5f) == (curveU >= 0.5f)))
+                        {
+                            marker = candidate;
+                            break;
+                        }
+
+                        continue;
+                    }
+
+                    bool sameEndpointSide = candidate.isEndpointBoundary
+                        && isEndpoint
+                        && (candidate.curveU >= 0.5f) == (curveU >= 0.5f);
+                    if ((isPinnedToKnot && candidate.isPinnedToKnot && candidate.preferredKnotIndex == preferredKnotIndex)
+                        || sameEndpointSide
+                        || Mathf.Abs(candidate.curveU - curveU) <= SegmentCurveUEpsilon)
+                    {
+                        marker = candidate;
+                        break;
+                    }
+
+                    continue;
                 }
 
                 if (candidate.junctionRef != null)
+                {
+                    continue;
+                }
+
+                if (candidate.isGeneratedBoundaryControl != isGeneratedBoundaryControl)
                 {
                     continue;
                 }
@@ -462,10 +703,57 @@ namespace Unity.Splines.Examples
             marker.isPinnedToKnot = isPinnedToKnot;
             marker.junctionRef = junction;
             marker.isEndpointBoundary = isEndpoint;
+            marker.isGeneratedBoundaryControl = isGeneratedBoundaryControl;
+            marker.boundaryRole = boundaryRole;
 
             RebuildSplineSemanticCache(splineIndex);
             EditorUtility.SetDirty(this);
             return marker.markerId;
+        }
+
+        private static RoadMarkerBoundaryRole ResolveMarkerBoundaryRole(
+            bool isEndpoint,
+            RoadMarkerBoundaryRole requestedRole,
+            float curveU)
+        {
+            if (requestedRole == RoadMarkerBoundaryRole.LowerCurveU
+                || requestedRole == RoadMarkerBoundaryRole.UpperCurveU)
+            {
+                return requestedRole;
+            }
+
+            if (isEndpoint)
+            {
+                return RoadMarkerBoundaryRole.Endpoint;
+            }
+
+            if (requestedRole == RoadMarkerBoundaryRole.Endpoint)
+            {
+                return curveU >= 0.5f
+                    ? RoadMarkerBoundaryRole.UpperCurveU
+                    : RoadMarkerBoundaryRole.LowerCurveU;
+            }
+
+            return requestedRole;
+        }
+
+        internal bool IsJunctionInteriorSegment(LogicalSegmentDef segmentDef)
+        {
+            if (segmentDef == null || !segmentDef.IsValid)
+            {
+                return false;
+            }
+
+            if (!TryGetRoadMarker(segmentDef.startMarkerId, out RoadMarker startMarker)
+                || !TryGetRoadMarker(segmentDef.endMarkerId, out RoadMarker endMarker))
+            {
+                return false;
+            }
+
+            return startMarker.kind == RoadMarkerKind.Junction
+                && endMarker.kind == RoadMarkerKind.Junction
+                && startMarker.junctionRef != null
+                && startMarker.junctionRef == endMarker.junctionRef;
         }
 
         internal void EnsureRoadId()
@@ -1058,15 +1346,491 @@ namespace Unity.Splines.Examples
             return nextId;
         }
 
-        private static float ComputeKnotCurveU(Spline spline, int knotIndex)
+        private bool TryResolveBoundaryKnotAtWorldPosition(int splineIndex, Vector3 worldPosition, out int knotIndex)
+        {
+            knotIndex = -1;
+            if (LoftSplines == null || splineIndex < 0 || splineIndex >= LoftSplines.Count)
+            {
+                return false;
+            }
+
+            Spline spline = LoftSplines[splineIndex];
+            if (spline == null || spline.Count <= 0)
+            {
+                return false;
+            }
+
+            if (!TryResolveSplinePointTarget(spline, worldPosition, out int existingKnotIndex, out int curveIndex, out float localT))
+            {
+                return false;
+            }
+
+            if (existingKnotIndex >= 0)
+            {
+                knotIndex = existingKnotIndex;
+                return true;
+            }
+
+            if (Container != null)
+            {
+                Undo.RecordObject(Container, "Insert Implicit Junction Boundary Knot");
+            }
+
+            int insertedKnotIndex = InsertKnotOnCurveSegment(spline, curveIndex, localT);
+            if (insertedKnotIndex < 0 || insertedKnotIndex >= spline.Count)
+            {
+                return false;
+            }
+
+            if (Container != null)
+            {
+                EditorUtility.SetDirty(Container);
+            }
+
+            knotIndex = insertedKnotIndex;
+            return true;
+        }
+
+        private bool TryResolveBoundaryKnotAtCurveU(
+            int splineIndex,
+            float resolvedCurveU,
+            int resolvedCurveIndex,
+            float resolvedLocalT,
+            out int knotIndex)
+        {
+            knotIndex = -1;
+            if (LoftSplines == null || splineIndex < 0 || splineIndex >= LoftSplines.Count)
+            {
+                return false;
+            }
+
+            Spline spline = LoftSplines[splineIndex];
+            if (spline == null || spline.Count <= 0)
+            {
+                return false;
+            }
+
+            if (!TryResolveSplineTargetAtCurveU(
+                    spline,
+                    resolvedCurveU,
+                    resolvedCurveIndex,
+                    resolvedLocalT,
+                    out int existingKnotIndex,
+                    out int curveIndex,
+                    out float localT))
+            {
+                return false;
+            }
+
+            if (existingKnotIndex >= 0)
+            {
+                knotIndex = existingKnotIndex;
+                return true;
+            }
+
+            if (Container != null)
+            {
+                Undo.RecordObject(Container, "Insert Implicit Junction Boundary Knot");
+            }
+
+            int insertedKnotIndex = InsertKnotOnCurveSegment(spline, curveIndex, localT);
+            if (insertedKnotIndex < 0 || insertedKnotIndex >= spline.Count)
+            {
+                return false;
+            }
+
+            if (Container != null)
+            {
+                EditorUtility.SetDirty(Container);
+            }
+
+            knotIndex = insertedKnotIndex;
+            return true;
+        }
+
+        private bool TryResolveSplinePointTarget(
+            Spline spline,
+            Vector3 worldPosition,
+            out int existingKnotIndex,
+            out int curveIndex,
+            out float localT)
+        {
+            existingKnotIndex = -1;
+            curveIndex = -1;
+            localT = -1f;
+
+            if (spline == null || spline.Count == 0)
+            {
+                return false;
+            }
+
+            if (spline.Count == 1)
+            {
+                existingKnotIndex = 0;
+                curveIndex = 0;
+                localT = 0f;
+                return true;
+            }
+
+            float3 targetLocalPosition = transform.InverseTransformPoint(worldPosition);
+            SplineUtility.GetNearestPoint(
+                spline,
+                targetLocalPosition,
+                out _,
+                out float splineT,
+                SplineUtility.PickResolutionMax,
+                4);
+
+            curveIndex = spline.SplineToCurveT(splineT, out float resolvedLocalT);
+            if (curveIndex < 0)
+            {
+                return false;
+            }
+
+            localT = Mathf.Clamp01(resolvedLocalT);
+            if (localT <= 0.0001f)
+            {
+                existingKnotIndex = curveIndex;
+                localT = 0f;
+                return true;
+            }
+
+            if (localT >= 0.9999f)
+            {
+                existingKnotIndex = curveIndex + 1;
+                localT = 1f;
+                return true;
+            }
+
+            return true;
+        }
+
+        private static bool TryResolveSplineTargetAtCurveU(
+            Spline spline,
+            float resolvedCurveU,
+            out int existingKnotIndex,
+            out int curveIndex,
+            out float localT)
+        {
+            return TryResolveSplineTargetAtCurveU(
+                spline,
+                resolvedCurveU,
+                -1,
+                -1f,
+                out existingKnotIndex,
+                out curveIndex,
+                out localT);
+        }
+
+        private static bool TryResolveSplineTargetAtCurveU(
+            Spline spline,
+            float resolvedCurveU,
+            int preferredCurveIndex,
+            float preferredLocalT,
+            out int existingKnotIndex,
+            out int curveIndex,
+            out float localT)
+        {
+            existingKnotIndex = -1;
+            curveIndex = -1;
+            localT = -1f;
+            if (spline == null || spline.Count == 0)
+            {
+                return false;
+            }
+
+            if (spline.Count == 1)
+            {
+                existingKnotIndex = 0;
+                curveIndex = 0;
+                localT = 0f;
+                return true;
+            }
+
+            float clampedCurveU = Mathf.Clamp01(resolvedCurveU);
+            for (int knotIndex = 0; knotIndex < spline.Count; knotIndex++)
+            {
+                float knotCurveU = ComputeKnotCurveU(spline, knotIndex);
+                if (Mathf.Abs(knotCurveU - clampedCurveU) > SegmentCurveUEpsilon)
+                {
+                    continue;
+                }
+
+                existingKnotIndex = knotIndex;
+                curveIndex = knotIndex >= spline.Count - 1 ? spline.Count - 2 : knotIndex;
+                localT = knotIndex >= spline.Count - 1 ? 1f : 0f;
+                return true;
+            }
+
+            curveIndex = preferredCurveIndex;
+            localT = preferredLocalT;
+            if (curveIndex < 0 || curveIndex >= spline.Count - 1 || localT < 0f || localT > 1f)
+            {
+                curveIndex = spline.SplineToCurveT(clampedCurveU, out float resolvedLocalT);
+                localT = resolvedLocalT;
+            }
+
+            if (curveIndex < 0)
+            {
+                return false;
+            }
+
+            curveIndex = Mathf.Clamp(curveIndex, 0, spline.Count - 2);
+            localT = Mathf.Clamp01(localT);
+            if (localT <= BoundaryKnotEpsilon)
+            {
+                existingKnotIndex = curveIndex;
+                localT = 0f;
+                return true;
+            }
+
+            if (localT >= 1f - BoundaryKnotEpsilon)
+            {
+                existingKnotIndex = curveIndex + 1;
+                localT = 1f;
+                return true;
+            }
+
+            return true;
+        }
+
+        private static int InsertKnotOnCurveSegment(Spline spline, int curveIndex, float curveT)
+        {
+            if (spline == null || spline.Count < 2)
+            {
+                return -1;
+            }
+
+            int insertIndex = Mathf.Clamp(curveIndex + 1, 1, spline.Count - 1);
+            float localT = Mathf.Clamp01(curveT);
+            if (localT <= 0.0001f)
+            {
+                return insertIndex - 1;
+            }
+
+            if (localT >= 0.9999f)
+            {
+                return insertIndex;
+            }
+
+            int previousIndex = insertIndex - 1;
+            BezierKnot previous = spline[previousIndex];
+            BezierKnot next = spline[insertIndex];
+            BezierCurve curve = new BezierCurve(previous, next);
+            CurveUtility.Split(curve, localT, out BezierCurve leftCurve, out BezierCurve rightCurve);
+
+            if (spline.GetTangentMode(previousIndex) == TangentMode.Mirrored)
+            {
+                spline.SetTangentMode(previousIndex, TangentMode.Continuous);
+            }
+
+            if (spline.GetTangentMode(insertIndex) == TangentMode.Mirrored)
+            {
+                spline.SetTangentMode(insertIndex, TangentMode.Continuous);
+            }
+
+            if (IsTangentModeEditable(spline.GetTangentMode(previousIndex)))
+            {
+                previous.TangentOut = math.mul(math.inverse(previous.Rotation), leftCurve.Tangent0);
+            }
+
+            if (IsTangentModeEditable(spline.GetTangentMode(insertIndex)))
+            {
+                next.TangentIn = math.mul(math.inverse(next.Rotation), rightCurve.Tangent1);
+            }
+
+            spline.SetKnotNoNotify(previousIndex, previous);
+            spline.SetKnotNoNotify(insertIndex, next);
+
+            float3 up = EvaluateUpVectorLocal(
+                curve,
+                localT,
+                math.rotate(previous.Rotation, math.up()),
+                math.rotate(next.Rotation, math.up()));
+            quaternion rotation = quaternion.LookRotationSafe(math.normalizesafe(rightCurve.Tangent0), up);
+            quaternion inverseRotation = math.inverse(rotation);
+            BezierKnot newKnot = new BezierKnot(
+                leftCurve.P3,
+                math.mul(inverseRotation, leftCurve.Tangent1),
+                math.mul(inverseRotation, rightCurve.Tangent0),
+                rotation);
+
+            spline.Insert(insertIndex, newKnot, TangentMode.Broken);
+            return insertIndex;
+        }
+
+        private const int BoundaryNormalsPerCurve = 16;
+        private const float BoundaryKnotEpsilon = 0.0001f;
+
+        private struct FrenetFrame
+        {
+            public float3 origin;
+            public float3 tangent;
+            public float3 normal;
+            public float3 binormal;
+        }
+
+        private static bool IsTangentModeEditable(TangentMode tangentMode)
+        {
+            return tangentMode == TangentMode.Broken
+                || tangentMode == TangentMode.Continuous
+                || tangentMode == TangentMode.Mirrored;
+        }
+
+        private static bool Approximately(float a, float b)
+        {
+            return math.abs(b - a) < math.max(0.000001f * math.max(math.abs(a), math.abs(b)), BoundaryKnotEpsilon * 8);
+        }
+
+        private static float3 GetExplicitLinearTangent(float3 point, float3 to)
+        {
+            return (to - point) / 3f;
+        }
+
+        private static FrenetFrame GetNextRotationMinimizingFrame(BezierCurve curve, FrenetFrame previousFrame, float nextT)
+        {
+            FrenetFrame nextFrame;
+            nextFrame.origin = CurveUtility.EvaluatePosition(curve, nextT);
+            nextFrame.tangent = CurveUtility.EvaluateTangent(curve, nextT);
+
+            float3 toCurrentFrame = nextFrame.origin - previousFrame.origin;
+            float c1 = math.dot(toCurrentFrame, toCurrentFrame);
+            float3 riL = previousFrame.binormal - toCurrentFrame * 2f / c1 * math.dot(toCurrentFrame, previousFrame.binormal);
+            float3 tiL = previousFrame.tangent - toCurrentFrame * 2f / c1 * math.dot(toCurrentFrame, previousFrame.tangent);
+
+            float3 v2 = nextFrame.tangent - tiL;
+            float c2 = math.dot(v2, v2);
+
+            nextFrame.binormal = math.normalize(riL - v2 * 2f / c2 * math.dot(v2, riL));
+            nextFrame.normal = math.normalize(math.cross(nextFrame.binormal, nextFrame.tangent));
+            return nextFrame;
+        }
+
+        private static float3 EvaluateUpVectorLocal(BezierCurve curve, float t, float3 startUp, float3 endUp)
+        {
+            float linearTangentLen = math.length(GetExplicitLinearTangent(curve.P0, curve.P3));
+            float3 linearTangentOut = math.normalize(curve.P3 - curve.P0) * linearTangentLen;
+            if (Approximately(math.length(curve.P1 - curve.P0), 0f))
+            {
+                curve.P1 = curve.P0 + linearTangentOut;
+            }
+
+            if (Approximately(math.length(curve.P2 - curve.P3), 0f))
+            {
+                curve.P2 = curve.P3 - linearTangentOut;
+            }
+
+            float3[] normalBuffer = new float3[BoundaryNormalsPerCurve];
+
+            FrenetFrame frame;
+            frame.origin = curve.P0;
+            frame.tangent = curve.P1 - curve.P0;
+            frame.normal = startUp;
+            frame.binormal = math.normalize(math.cross(frame.tangent, frame.normal));
+            if (float.IsNaN(frame.binormal.x))
+            {
+                return float3.zero;
+            }
+
+            normalBuffer[0] = frame.normal;
+
+            float stepSize = 1f / (BoundaryNormalsPerCurve - 1);
+            float currentT = stepSize;
+            float prevT = 0f;
+            float3 upVector = float3.zero;
+            for (int index = 1; index < BoundaryNormalsPerCurve; ++index)
+            {
+                FrenetFrame prevFrame = frame;
+                frame = GetNextRotationMinimizingFrame(curve, prevFrame, currentT);
+                normalBuffer[index] = frame.normal;
+
+                if (prevT <= t && currentT >= t)
+                {
+                    float lerpT = (t - prevT) / stepSize;
+                    upVector = (float3)Vector3.Slerp(prevFrame.normal, frame.normal, lerpT);
+                }
+
+                prevT = currentT;
+                currentT += stepSize;
+            }
+
+            if (prevT <= t && currentT >= t)
+            {
+                upVector = endUp;
+            }
+
+            float3 lastFrameNormal = normalBuffer[BoundaryNormalsPerCurve - 1];
+            float angleBetweenNormals = math.acos(math.clamp(math.dot(lastFrameNormal, endUp), -1f, 1f));
+            if (angleBetweenNormals == 0f)
+            {
+                return upVector;
+            }
+
+            float3 lastNormalTangent = math.normalize(frame.tangent);
+            quaternion positiveRotation = quaternion.AxisAngle(lastNormalTangent, angleBetweenNormals);
+            quaternion negativeRotation = quaternion.AxisAngle(lastNormalTangent, -angleBetweenNormals);
+            float positiveRotationResult = math.acos(math.clamp(math.dot(math.rotate(positiveRotation, endUp), lastFrameNormal), -1f, 1f));
+            float negativeRotationResult = math.acos(math.clamp(math.dot(math.rotate(negativeRotation, endUp), lastFrameNormal), -1f, 1f));
+            if (positiveRotationResult > negativeRotationResult)
+            {
+                angleBetweenNormals *= -1f;
+            }
+
+            currentT = stepSize;
+            prevT = 0f;
+            for (int index = 1; index < normalBuffer.Length; index++)
+            {
+                float3 normal = normalBuffer[index];
+                float adjustmentAngle = math.lerp(0f, angleBetweenNormals, currentT);
+                float3 tangent = math.normalize(CurveUtility.EvaluateTangent(curve, currentT));
+                float3 adjustedNormal = math.rotate(quaternion.AxisAngle(tangent, -adjustmentAngle), normal);
+                normalBuffer[index] = adjustedNormal;
+
+                if (prevT <= t && currentT >= t)
+                {
+                    float lerpT = (t - prevT) / stepSize;
+                    upVector = (float3)Vector3.Slerp(normalBuffer[index - 1], normalBuffer[index], lerpT);
+                    return upVector;
+                }
+
+                prevT = currentT;
+                currentT += stepSize;
+            }
+
+            return endUp;
+        }
+
+        internal static float ComputeKnotCurveU(Spline spline, int knotIndex)
         {
             if (spline == null || spline.Count <= 1)
             {
                 return 0f;
             }
 
-            int curveCount = Mathf.Max(1, spline.Count - 1);
-            return Mathf.Clamp01(knotIndex / (float)curveCount);
+            knotIndex = Mathf.Clamp(knotIndex, 0, spline.Count - 1);
+            return Mathf.Clamp01(SplineUtility.GetNormalizedInterpolation(spline, knotIndex, PathIndexUnit.Knot));
+        }
+
+        private static int ResolveFallbackKnotIndexForCurveU(Spline spline, float curveU)
+        {
+            if (spline == null || spline.Count <= 0)
+            {
+                return 0;
+            }
+
+            if (TryResolveSplineTargetAtCurveU(spline, curveU, out int existingKnotIndex, out int curveIndex, out float localT))
+            {
+                if (existingKnotIndex >= 0)
+                {
+                    return existingKnotIndex;
+                }
+
+                int leftIndex = Mathf.Clamp(curveIndex, 0, spline.Count - 1);
+                int rightIndex = Mathf.Clamp(curveIndex + 1, 0, spline.Count - 1);
+                return localT >= 0.5f ? rightIndex : leftIndex;
+            }
+
+            return Mathf.Clamp(Mathf.RoundToInt(Mathf.Clamp01(curveU) * Mathf.Max(1, spline.Count - 1)), 0, spline.Count - 1);
         }
 
         private static float EstimateSplineArcLengthAt(Spline spline, float targetCurveU)

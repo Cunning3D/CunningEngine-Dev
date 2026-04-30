@@ -81,6 +81,18 @@ namespace CunningEngine.Editor.CDA {
                     param_type = CdaMiniJson.TryGetObjectString(p, "param_type", out var t) ? t : "Float",
                     default_value_json = CdaMiniJson.TryGetObjectRaw(p, "default_value", out var dv) ? dv : "{\"Float\":0}",
                 };
+                if (TryGetObjectFloat(p, "min", out var min)) pp.min = min;
+                if (TryGetObjectFloat(p, "max", out var max)) pp.max = max;
+                if (CdaMiniJson.TryGetObjectString(p, "folder", out var folder)) pp.folder = folder;
+                if (CdaMiniJson.TryGetObjectString(p, "tooltip", out var tooltip)) pp.tooltip = tooltip;
+                if (CdaMiniJson.TryGetObjectRaw(p, "choices", out var choices)) {
+                    foreach (var choice in CdaMiniJson.SplitArrayElements(choices)) {
+                        pp.choices.Add(new CdaParamChoice {
+                            label = CdaMiniJson.TryGetObjectString(choice, "label", out var cl) ? cl : "",
+                            value = CdaMiniJson.TryGetObjectInt(choice, "value", out var cv) ? cv : 0,
+                        });
+                    }
+                }
                 if (CdaMiniJson.TryGetObjectRaw(p, "bindings", out var bs)) {
                     foreach (var b in CdaMiniJson.SplitArrayElements(bs)) {
                         pp.bindings.Add(new CdaParamBinding {
@@ -93,6 +105,12 @@ namespace CunningEngine.Editor.CDA {
                 r.Add(pp);
             }
             return r;
+        }
+
+        static bool TryGetObjectFloat(string objRaw, string prop, out float value) {
+            value = 0f;
+            if (!CdaMiniJson.TryGetObjectRaw(objRaw, prop, out var raw)) return false;
+            return float.TryParse(raw, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out value);
         }
     }
 }

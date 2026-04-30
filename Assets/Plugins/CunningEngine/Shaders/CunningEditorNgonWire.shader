@@ -9,9 +9,9 @@ Shader "Hidden/CunningEditorNgonWire" {
 
         Pass {
             Blend SrcAlpha OneMinusSrcAlpha
-            AlphaToMask On
             ZWrite Off
             ZTest LEqual
+            Offset -1, -1
             Cull Off
 
             HLSLPROGRAM
@@ -30,7 +30,7 @@ Shader "Hidden/CunningEditorNgonWire" {
 
             struct v2f {
                 float4 pos : SV_POSITION;
-                float side : TEXCOORD0;
+                float dist : TEXCOORD0;
             };
 
             v2f vert(appdata v) {
@@ -51,14 +51,14 @@ Shader "Hidden/CunningEditorNgonWire" {
 
                 currentClip.xy += offsetNdc * currentClip.w;
                 o.pos = currentClip;
-                o.side = v.uv.y;
+                o.dist = abs(v.uv.y) * max(_LineWidth, 0.5) * 0.5;
                 return o;
             }
 
             half4 frag(v2f i) : SV_Target {
-                float width = abs(i.side);
-                float aa = max(fwidth(width) * 2.0, 1e-4);
-                float alpha = 1.0 - smoothstep(1.0 - aa * 2.0, 1.0, width);
+                float halfWidth = max(_LineWidth, 0.5) * 0.5;
+                float aa = max(fwidth(i.dist), 0.75);
+                float alpha = 1.0 - smoothstep(halfWidth - aa, halfWidth, i.dist);
                 return half4(_Color.rgb, _Color.a * alpha);
             }
             ENDHLSL

@@ -87,7 +87,7 @@ namespace CunningEngine.Editor {
         }
 
         sealed class BridgeSelectionPayload {
-            public readonly List<CunningCDAInstance> cdaInstances = new List<CunningCDAInstance>();
+            public readonly List<CunningCDAHostInstance> cdaInstances = new List<CunningCDAHostInstance>();
             public readonly List<MonoBehaviour> standaloneInputs = new List<MonoBehaviour>();
 
             public int Count => cdaInstances.Count + standaloneInputs.Count;
@@ -166,9 +166,8 @@ namespace CunningEngine.Editor {
             var go = new GameObject("CDAInstance");
             go.transform.SetParent(root.transform, false);
             Undo.RegisterCreatedObjectUndo(go, "Create CDA Instance");
-            var inst = go.AddComponent<CunningCDAInstance>();
+            var inst = go.AddComponent<CunningCDAHostInstance>();
             inst.asset = a;
-            if (inst.instanceId == 0) inst.instanceId = (ulong)UnityEngine.Random.Range(int.MinValue, int.MaxValue) ^ ((ulong)DateTime.UtcNow.Ticks << 1);
             // Best-effort auto-bind from children
             var spline = root.GetComponentInChildren<CunningInputSpline>(true);
             var mesh = root.GetComponentInChildren<CunningInputMesh>(true);
@@ -177,79 +176,7 @@ namespace CunningEngine.Editor {
             if (inst.inputs.Count > 0) inst.inputs[0] = spline;
             if (inst.inputs.Count > 1) inst.inputs[1] = mesh;
             Selection.activeGameObject = go;
-            UnityEngine.Debug.Log("Cunning Bridge: created test CunningCDAInstance and auto-bound inputs[0]=Spline, inputs[1]=Mesh. Now run Open Selected in Cunning3D.");
-        }
-
-        [MenuItem(MENU_INPUT + "Create Empty Bridge CDA (drag Spline/Mesh into inputs)", false, 12)]
-        static void CreateEmptyBridgeCda() {
-            // Creates a transient CDAAssetObject with GAME-style sourceJson only (no file path).
-            // Cunning3D side will reconstruct a full in-memory CDA asset from this runtime json.
-            var so = ScriptableObject.CreateInstance<CDAAssetObject>();
-            so.name = "UnityEmptyBridgeCDA";
-            so.sourcePath = ""; // important: forces bridge to use sourceJson
-
-            // Default ports: 2 inputs (spline+mesh), 0 outputs (bridge test focuses on inputs).
-            so.inputs = new List<CdaPort> {
-                new CdaPort { name = "input_0", data_type = "Geometry" },
-                new CdaPort { name = "input_1", data_type = "Geometry" },
-            };
-            so.outputs = new List<CdaPort>();
-            so.promoted_params = new List<CdaPromotedParam>();
-            so.sourceJson = BuildRuntimeDefJson(so.name, so.inputs, so.outputs);
-
-            var root = GameObject.Find("__CunningBridgeTest") ?? new GameObject("__CunningBridgeTest");
-            Undo.RegisterCreatedObjectUndo(root, "Create Cunning Bridge Test");
-            var go = new GameObject("EmptyBridgeCDAInstance");
-            go.transform.SetParent(root.transform, false);
-            Undo.RegisterCreatedObjectUndo(go, "Create Empty Bridge CDA Instance");
-            var inst = go.AddComponent<CunningCDAInstance>();
-            inst.asset = so;
-            if (inst.instanceId == 0) inst.instanceId = (ulong)UnityEngine.Random.Range(int.MinValue, int.MaxValue) ^ ((ulong)DateTime.UtcNow.Ticks << 1);
-            if (inst.inputs == null) inst.inputs = new List<MonoBehaviour>();
-            while (inst.inputs.Count < so.inputs.Count) inst.inputs.Add(null);
-
-            Selection.activeGameObject = go;
-            UnityEngine.Debug.Log("Cunning Bridge: created EmptyBridgeCDAInstance.\n- Drag a GameObject with SplineContainer into inputs[0] (it will auto-add CunningInputSpline)\n- Drag a GameObject with CunningMesh into inputs[1]\nThen run Debug/Open Selected in Cunning3D.");
-        }
-
-        static string BuildRuntimeDefJson(string name, List<CdaPort> ins, List<CdaPort> outs) {
-            // Minimal RuntimeDefinition JSON (GAME chunk schema).
-            // We intentionally omit nodes/connections to keep this an 'empty CDA' for bridge testing.
-            var uuid = Guid.NewGuid().ToString();
-            var sb = new StringBuilder(512);
-            sb.Append('{');
-            sb.Append("\"meta\":{");
-            sb.Append("\"format_version\":1,");
-            sb.Append("\"min_engine_version\":\"0.1.0\",");
-            sb.Append("\"uuid\":\"").Append(uuid).Append("\",");
-            sb.Append("\"name\":\"").Append(CdaMiniJson.EscapeString(name ?? "CDA")).Append("\",");
-            sb.Append("\"author\":null,");
-            sb.Append("\"license\":null");
-            sb.Append("},");
-            sb.Append("\"inputs\":[");
-            for (int i = 0; i < (ins != null ? ins.Count : 0); i++) {
-                if (i != 0) sb.Append(',');
-                sb.Append('{');
-                sb.Append("\"id\":\"").Append(Guid.NewGuid().ToString()).Append("\",");
-                sb.Append("\"name\":\"").Append(CdaMiniJson.EscapeString(ins[i].name ?? $"input_{i}")).Append("\",");
-                sb.Append("\"data_type\":\"").Append(CdaMiniJson.EscapeString(ins[i].data_type ?? "Geometry")).Append("\"");
-                sb.Append('}');
-            }
-            sb.Append("],");
-            sb.Append("\"outputs\":[");
-            for (int i = 0; i < (outs != null ? outs.Count : 0); i++) {
-                if (i != 0) sb.Append(',');
-                sb.Append('{');
-                sb.Append("\"id\":\"").Append(Guid.NewGuid().ToString()).Append("\",");
-                sb.Append("\"name\":\"").Append(CdaMiniJson.EscapeString(outs[i].name ?? $"output_{i}")).Append("\",");
-                sb.Append("\"data_type\":\"").Append(CdaMiniJson.EscapeString(outs[i].data_type ?? "Geometry")).Append("\"");
-                sb.Append('}');
-            }
-            sb.Append("],");
-            sb.Append("\"nodes\":[],\"connections\":[],\"promoted_params\":[],\"hud_units\":[],\"coverlay_units\":[],");
-            sb.Append("\"access_mode\":\"WhiteBox\",\"exports\":[]");
-            sb.Append('}');
-            return sb.ToString();
+            UnityEngine.Debug.Log("Cunning Bridge: created test CunningCDAHostInstance and auto-bound inputs[0]=Spline, inputs[1]=Mesh.");
         }
 
         static BridgeSelectionPayload GetSelectedBridgeSelection() {
@@ -285,11 +212,11 @@ namespace CunningEngine.Editor {
             return selection;
         }
 
-        static bool TryGetDirectSelectedCdaInstance(UnityEngine.Object selectedObject, out CunningCDAInstance instance) {
+        static bool TryGetDirectSelectedCdaInstance(UnityEngine.Object selectedObject, out CunningCDAHostInstance instance) {
             instance = null;
             if (!selectedObject) return false;
 
-            if (selectedObject is CunningCDAInstance directInstance) {
+            if (selectedObject is CunningCDAHostInstance directInstance) {
                 instance = directInstance;
                 return instance != null;
             }
@@ -307,7 +234,7 @@ namespace CunningEngine.Editor {
             return CunningInputUtility.Resolve(selectedObject);
         }
 
-        static bool TryGetSelectedCdaContainer(UnityEngine.Object selectedObject, out CunningCDAInstance instance) {
+        static bool TryGetSelectedCdaContainer(UnityEngine.Object selectedObject, out CunningCDAHostInstance instance) {
             instance = null;
             if (!selectedObject) return false;
 
@@ -317,7 +244,7 @@ namespace CunningEngine.Editor {
             }
             if (!go) return false;
 
-            instance = go.GetComponent<CunningCDAInstance>();
+            instance = go.GetComponent<CunningCDAHostInstance>();
             return instance != null;
         }
 
@@ -421,7 +348,7 @@ namespace CunningEngine.Editor {
                 return;
             }
             sendSw.Stop();
-            LogTiming("bridge-open-current-shm.ipc-fallback", sendSw.Elapsed.TotalMilliseconds, $"payload_bytes={shmSize}, running={IsCunning3DRunning()}");
+            LogTiming("bridge-open-current-shm.ipc-miss", sendSw.Elapsed.TotalMilliseconds, $"payload_bytes={shmSize}, running={IsCunning3DRunning()}");
 
             if (IsCunning3DRunning()) {
                 var ok = EditorUtility.DisplayDialog(
@@ -438,8 +365,7 @@ namespace CunningEngine.Editor {
             LogTiming("bridge-open-current-shm.total", totalSw.Elapsed.TotalMilliseconds, $"mode=launch, payload_bytes={shmSize}");
         }
 
-        static string BuildParamsJson(CunningCDAInstance t) {
-            if (t.paramValues == null) t.paramValues = new Dictionary<string, CdaParamValue>();
+        static string BuildParamsJson(CunningCDAHostInstance t) {
             if (t.asset != null && t.asset.promoted_params != null) foreach (var p in t.asset.promoted_params) if (!t.paramValues.ContainsKey(p.name)) t.paramValues[p.name] = CdaParamValue.FromDefaultJson(p.default_value_json);
             var sb = new StringBuilder(256);
             sb.Append('{');
@@ -455,7 +381,7 @@ namespace CunningEngine.Editor {
             return sb.ToString();
         }
 
-        static string BuildBridgeRecordJson(CunningCDAInstance t, BridgeSharedMemoryBlobBuilder sharedMemoryBlobs = null, BridgeSharedMemoryBuildStats stats = null) {
+        static string BuildBridgeRecordJson(CunningCDAHostInstance t, BridgeSharedMemoryBlobBuilder sharedMemoryBlobs = null, BridgeSharedMemoryBuildStats stats = null) {
             var asset = t.asset;
             var absPath = GetAssetAbsPath(asset);
             var paramsJson = BuildParamsJson(t);
@@ -706,7 +632,7 @@ namespace CunningEngine.Editor {
                 if (!tr) return false;
                 var parent = tr.parent;
                 if (!parent) return false;
-                var owner = parent.GetComponent<CunningCDAInstance>();
+                var owner = parent.GetComponent<CunningCDAHostInstance>();
                 if (!owner) return false;
                 sourceInstanceId = owner.instanceId;
                 sourceOutputName = GetCdaOutputKeySafe(owner, mesh);
@@ -722,7 +648,7 @@ namespace CunningEngine.Editor {
             }
         }
 
-        static string GetCdaOutputKeySafe(CunningCDAInstance owner, CunningMesh mesh) {
+        static string GetCdaOutputKeySafe(CunningCDAHostInstance owner, CunningMesh mesh) {
             if (!mesh) return "";
             try {
                 var go = mesh.gameObject;

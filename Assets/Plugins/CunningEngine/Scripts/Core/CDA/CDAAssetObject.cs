@@ -5,6 +5,7 @@ using UnityEngine;
 namespace CunningEngine.CDA {
     [Serializable] public sealed class CdaPort { public string name; public string data_type; }
     [Serializable] public sealed class CdaParamBinding { public string node; public string param; public uint? channel; }
+    [Serializable] public sealed class CdaParamChoice { public string label; public int value; }
     [Serializable] public sealed class CdaPromotedParam {
         public string name, label, group, param_type;
         public int order;
@@ -12,6 +13,7 @@ namespace CunningEngine.CDA {
         public float? min, max; // Optional range constraints
         public string folder;
         public string tooltip;
+        public List<CdaParamChoice> choices = new();
         public List<CdaParamBinding> bindings = new();
     }
 

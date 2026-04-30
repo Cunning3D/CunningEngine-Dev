@@ -27,7 +27,6 @@ namespace CunningEngine {
         [Header("Behaviour")]
         public bool enablePackedMeshInstancing = true;
         public bool enableUnityPrefabInstancing = true;
-        public bool instanceAttrIsPrefabFallback = true;
         public bool hideMeshRendererWhenActive = true;
 
         [Header("Packed Mesh Instancing")]
@@ -136,20 +135,10 @@ namespace CunningEngine {
             var rootM = transform.localToWorldMatrix;
             bool any = false;
 
-            // Prefab instancing prefers @unity_instance (Houdini Engine convention).
             if (enableUnityPrefabInstancing) {
                 var unityCount = (int)NativeMethods.cunning_geo_get_attr_string_count(currentHandle, 1, unityInstanceAttr);
                 if (unityCount > 0) {
                     any |= BuildPrefabInstances(rootM, ptCount, unityInstanceAttr);
-                } else if (instanceAttrIsPrefabFallback) {
-                    // Fallback: treat @instance as prefab string only if there's no packed prototype table present.
-                    var packedPrimCount = (int)NativeMethods.cunning_geo_get_attr_string_count(currentHandle, 3, packedIdAttr);
-                    if (packedPrimCount <= 0) {
-                        var instCount = (int)NativeMethods.cunning_geo_get_attr_string_count(currentHandle, 1, instanceAttr);
-                        if (instCount > 0) {
-                            any |= BuildPrefabInstances(rootM, ptCount, instanceAttr);
-                        }
-                    }
                 }
             }
 
@@ -218,10 +207,11 @@ namespace CunningEngine {
 
                     for (int ii = 0; ii < pts.Count; ii++) {
                         var pi = pts[ii];
-                        var t = pos[pi];
+                        var t = CunningUnityCoordinates.ToUnityPosition(pos[pi]);
                         var s = (pscale != null && pi < pscale.Length) ? pscale[pi] : 1f;
-                        var q = orient != null ? new Quaternion(orient[pi].x, orient[pi].y, orient[pi].z, orient[pi].w) : ComputeRotationFromNUp(n, up, pi);
-                        if (orient != null) q = Quaternion.Normalize(q);
+                        var q = orient != null
+                            ? CunningUnityCoordinates.ToUnityRotation(new Quaternion(orient[pi].x, orient[pi].y, orient[pi].z, orient[pi].w))
+                            : ComputeRotationFromNUp(n, up, pi);
                         p.world[ii] = rootM * Matrix4x4.TRS(t, q, Vector3.one * s);
                     }
 
@@ -303,10 +293,11 @@ namespace CunningEngine {
                     var pi = pts[ii];
                     var go = group.instances[ii];
                     if (go == null) continue;
-                    var t = pos[pi];
+                    var t = CunningUnityCoordinates.ToUnityPosition(pos[pi]);
                     var s = (pscale != null && pi < pscale.Length) ? pscale[pi] : 1f;
-                    var q = orient != null ? new Quaternion(orient[pi].x, orient[pi].y, orient[pi].z, orient[pi].w) : ComputeRotationFromNUp(n, up, pi);
-                    if (orient != null) q = Quaternion.Normalize(q);
+                    var q = orient != null
+                        ? CunningUnityCoordinates.ToUnityRotation(new Quaternion(orient[pi].x, orient[pi].y, orient[pi].z, orient[pi].w))
+                        : ComputeRotationFromNUp(n, up, pi);
                     var m = rootM * Matrix4x4.TRS(t, q, Vector3.one * s);
                     ApplyWorldMatrix(go.transform, m);
                 }
@@ -378,7 +369,7 @@ namespace CunningEngine {
             if (forward.sqrMagnitude < 1e-12f) return Quaternion.identity;
             var u = (up != null && i < up.Length) ? up[i] : Vector3.up;
             if (u.sqrMagnitude < 1e-12f) u = Vector3.up;
-            return Quaternion.LookRotation(forward.normalized, u.normalized);
+            return CunningUnityCoordinates.ToUnityRotation(Quaternion.LookRotation(forward.normalized, u.normalized));
         }
 
         Vector3[] ReadVec3Attr(string name, int count) {

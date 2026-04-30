@@ -109,6 +109,7 @@ namespace CunningEngine {
                     return TryRebuildFull(handle, targetMesh, targetMesh.name, includeLines, runtimeCache, renderState, out buildData);
                 }
 
+                CunningUnityCoordinates.ConvertRenderVertices(runtimeCache.scratchVertices, count);
                 Array.Copy(runtimeCache.scratchVertices, 0, runtimeCache.renderVertices, start, count);
                 targetMesh.SetVertexBufferData(
                     runtimeCache.scratchVertices,
@@ -155,6 +156,7 @@ namespace CunningEngine {
             if (!TryCopyRenderVertices(handle, runtimeCache.renderVertices)) {
                 return false;
             }
+            CunningUnityCoordinates.ConvertRenderVertices(runtimeCache.renderVertices, vertexCount);
 
             runtimeCache.vertexOffsets = TryReadU32Array(handle, NativeMethods.cunning_geo_copy_prim_vertex_offsets) ?? Array.Empty<int>();
             runtimeCache.vertexIndices = TryReadU32Array(handle, NativeMethods.cunning_geo_copy_prim_vertex_indices) ?? Array.Empty<int>();
@@ -238,9 +240,11 @@ namespace CunningEngine {
 
                 int v0 = runtimeCache.vertexIndices[start];
                 for (int index = start + 1; index < end - 1; index++) {
-                    triangles.Add(v0);
-                    triangles.Add(runtimeCache.vertexIndices[index]);
-                    triangles.Add(runtimeCache.vertexIndices[index + 1]);
+                    CunningUnityCoordinates.AddTriangle(
+                        triangles,
+                        v0,
+                        runtimeCache.vertexIndices[index],
+                        runtimeCache.vertexIndices[index + 1]);
                 }
             }
 
@@ -376,6 +380,7 @@ namespace CunningEngine {
                 vertexHandle.Free();
                 if (includeLines && lineHandle.IsAllocated) lineHandle.Free();
             }
+            CunningUnityCoordinates.ConvertPositions(vertices);
 
             targetMesh.Clear();
             targetMesh.name = meshName;
@@ -464,9 +469,11 @@ namespace CunningEngine {
 
                 int v0 = vertexIndices[start];
                 for (int index = start + 1; index < end - 1; index++) {
-                    triangleList.Add(v0);
-                    triangleList.Add(vertexIndices[index]);
-                    triangleList.Add(vertexIndices[index + 1]);
+                    CunningUnityCoordinates.AddTriangle(
+                        triangleList,
+                        v0,
+                        vertexIndices[index],
+                        vertexIndices[index + 1]);
                 }
             }
 
@@ -522,6 +529,7 @@ namespace CunningEngine {
             } finally {
                 triangleHandle.Free();
             }
+            CunningUnityCoordinates.FlipTriangleWindingInPlace(triangles);
             return triangles;
         }
 
@@ -568,6 +576,7 @@ namespace CunningEngine {
                 int baseIndex = i * 3;
                 normals[i] = new Vector3(flat[baseIndex], flat[baseIndex + 1], flat[baseIndex + 2]);
             }
+            CunningUnityCoordinates.ConvertNormals(normals);
             return true;
         }
 

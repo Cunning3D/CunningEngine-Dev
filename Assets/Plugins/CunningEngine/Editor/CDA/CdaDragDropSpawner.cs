@@ -22,11 +22,15 @@ namespace CunningEngine.Editor.CDA {
         }
 
         static void SpawnInstance(CDAAssetObject asset) {
-            if (asset == null) return;
-            var go = new GameObject(asset.name);
+            var go = new GameObject(asset != null ? asset.name : "CDA Instance");
+            go.SetActive(false);
             Undo.RegisterCreatedObjectUndo(go, "Create CDA Instance");
-            var inst = go.AddComponent<CunningCDAInstance>();
+            var inst = go.AddComponent<CunningCDAHostInstance>();
             inst.asset = asset;
+            go.SetActive(true);
+            EditorUtility.SetDirty(inst);
+            EditorApplication.QueuePlayerLoopUpdate();
+            SceneView.RepaintAll();
             Selection.activeGameObject = go;
         }
 
@@ -51,4 +55,3 @@ namespace CunningEngine.Editor.CDA {
         static void CreateEmpty(MenuCommand _) { SpawnInstance(null); }
     }
 }
-

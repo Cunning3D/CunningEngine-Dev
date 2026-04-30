@@ -1,0 +1,132 @@
+#pragma kernel heightfield_mask_by_feature_main
+// CUNNING_KERNEL_PACKAGE v1
+// kernel=heightfield.mask_by_feature.slope_height_curvature_direction.dense_f32.v1
+// entry=heightfield_mask_by_feature_main
+// layout_hash=0x79f7751d657d16a7
+// binding_hash=0xf5dc55c89f9372ad
+// math_hash=0x5b83ceb04a833753
+// contract_hash=0x06089e7158bd896d
+
+StructuredBuffer<float> src_field : register(t0);
+RWStructuredBuffer<float> dst_field : register(u1);
+
+static const uint WIDTH = 500u;
+static const uint HEIGHT = 500u;
+static const uint STRIDE = 2u;
+
+uint cell_index(uint x, uint y) {
+    return y * WIDTH + x;
+}
+
+uint cell_base(uint index) {
+    return index * STRIDE;
+}
+
+void copy_cell(uint base) {
+    for (uint i = 0u; i < STRIDE; i = i + 1u) {
+        dst_field[base + i] = src_field[base + i];
+    }
+}
+
+float read_layer_clamped(int x, int y, uint layer_offset) {
+    uint cx = (uint)clamp(x, 0, (int)WIDTH - 1);
+    uint cy = (uint)clamp(y, 0, (int)HEIGHT - 1);
+    return src_field[cell_base(cell_index(cx, cy)) + layer_offset];
+}
+
+static const uint HEIGHT_OFFSET = 0u;
+static const uint MASK_OFFSET = 1u;
+static const int COMBINE_MODE = 0;
+static const float BLEND = 0.500000000;
+static const bool INVERT_MASK = false;
+static const bool USE_SLOPE = true;
+static const float MIN_SLOPE = 20.000000000;
+static const float MAX_SLOPE = 70.000000000;
+static const bool USE_HEIGHT = false;
+static const float MIN_HEIGHT = 0.000000000;
+static const float MAX_HEIGHT = 1.000000000;
+static const bool USE_CURVATURE = false;
+static const float MAX_CURVATURE = 10.000000000;
+static const bool USE_DIRECTION = false;
+static const float DIRECTION = 0.000000000;
+static const float DIRECTION_SPREAD = 0.523598790;
+
+float band(float value, float lo, float hi) {
+    float a = min(lo, hi);
+    float b = max(lo, hi);
+    float feather = max((b - a) * 0.1, 0.000001);
+    return smoothstep(a - feather, a + feather, value) * (1.0 - smoothstep(b - feather, b + feather, value));
+}
+
+float combine_mask(float current, float candidate) {
+    if (COMBINE_MODE == 1) {
+        return clamp(current + candidate, 0.0, 1.0);
+    }
+    if (COMBINE_MODE == 2) {
+        return clamp(current - candidate, 0.0, 1.0);
+    }
+    if (COMBINE_MODE == 3) {
+        return abs(current - candidate);
+    }
+    if (COMBINE_MODE == 4) {
+        return current * candidate;
+    }
+    if (COMBINE_MODE == 5) {
+        return max(current, candidate);
+    }
+    if (COMBINE_MODE == 6) {
+        return min(current, candidate);
+    }
+    if (COMBINE_MODE == 7) {
+        return lerp(current, candidate, BLEND);
+    }
+    return candidate;
+}
+
+[numthreads(16, 16, 1)]
+void heightfield_mask_by_feature_main(uint3 gid : SV_DispatchThreadID) {
+    if (gid.x >= WIDTH || gid.y >= HEIGHT) {
+        return;
+    }
+    uint index = cell_index(gid.x, gid.y);
+    uint base = cell_base(index);
+    copy_cell(base);
+    int x = (int)gid.x;
+    int y = (int)gid.y;
+    float h = src_field[base + HEIGHT_OFFSET];
+    float left = read_layer_clamped(x - 1, y, HEIGHT_OFFSET);
+    float right = read_layer_clamped(x + 1, y, HEIGHT_OFFSET);
+    float down = read_layer_clamped(x, y - 1, HEIGHT_OFFSET);
+    float up = read_layer_clamped(x, y + 1, HEIGHT_OFFSET);
+    float2 grad = float2((right - left) * 0.5, (up - down) * 0.5);
+    float slope = atan(length(grad)) * 57.295779513;
+    float curvature = abs(left + right + down + up - 4.0 * h);
+    float candidate = 1.0;
+    bool any_feature = false;
+    if (USE_SLOPE) {
+        candidate = candidate * band(slope, MIN_SLOPE, MAX_SLOPE);
+        any_feature = true;
+    }
+    if (USE_HEIGHT) {
+        candidate = candidate * band(h, MIN_HEIGHT, MAX_HEIGHT);
+        any_feature = true;
+    }
+    if (USE_CURVATURE) {
+        candidate = candidate * clamp(curvature / MAX_CURVATURE, 0.0, 1.0);
+        any_feature = true;
+    }
+    if (USE_DIRECTION) {
+        float angle = atan2(grad.y, grad.x);
+        float delta = abs(atan2(sin(angle - DIRECTION), cos(angle - DIRECTION)));
+        candidate = candidate * clamp(1.0 - delta / DIRECTION_SPREAD, 0.0, 1.0);
+        any_feature = true;
+    }
+    if (!any_feature) {
+        candidate = 1.0;
+    }
+    if (INVERT_MASK) {
+        candidate = 1.0 - candidate;
+    }
+    float current = src_field[base + MASK_OFFSET];
+    dst_field[base + MASK_OFFSET] = clamp(combine_mask(current, candidate), 0.0, 1.0);
+}

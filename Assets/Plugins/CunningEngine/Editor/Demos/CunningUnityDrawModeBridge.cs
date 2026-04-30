@@ -19,6 +19,7 @@ namespace CunningEngine.Editor.Demos {
         const float UnityTexturedWireWidth = 2.6f;
         const float UnityPureWireWidth = 2.25f;
         static readonly Dictionary<int, WireOverlayCache> WireOverlayCaches = new Dictionary<int, WireOverlayCache>();
+        static readonly HashSet<ulong> s_uniqueEdges = new HashSet<ulong>();
         static Material s_wireMaterial;
         static int s_previousAntiAliasing = -1;
 
@@ -52,7 +53,10 @@ namespace CunningEngine.Editor.Demos {
             int wireMode = CunningSceneViewModeState.WireMode;
             var selectedObjects = Selection.gameObjects;
             var cunningMeshes = Object.FindObjectsByType<CunningMesh>(FindObjectsSortMode.None);
-            bool wantsCustomWire = cunningMeshes.Length > 0 && (useUnityPureWireframe || (wireOverlayEnabled && wireMode != CunningSceneViewModeState.WireModeOff && useShadedOverlayMode));
+            bool wantsCustomWire = cunningMeshes.Length > 0 && (
+                useUnityPureWireframe
+                || HasExplicitWireDisplay(cunningMeshes)
+                || (wireOverlayEnabled && wireMode != CunningSceneViewModeState.WireModeOff && useShadedOverlayMode));
 
             EnsureWireMaterial();
             CleanupDeadCaches();
@@ -85,17 +89,39 @@ namespace CunningEngine.Editor.Demos {
                 }
 
                 if (!useShadedOverlayMode || !wireOverlayEnabled || wireMode == CunningSceneViewModeState.WireModeOff) {
+                    if (cunningMesh.EditorWantsWireOverlay) {
+                        DrawNgonWireOverlay(cunningMesh, sceneView.camera, cunningMesh.EditorWireOverlayColor, GetScaledLineWidth(UnityTexturedWireWidth));
+                    }
                     continue;
                 }
 
                 bool shouldDraw = wireMode == CunningSceneViewModeState.WireModeAll
                     || IsSelectionHighlightTarget(cunningMesh.transform, selectedObjects);
+                if (cunningMesh.EditorWantsWireOverlay) {
+                    DrawNgonWireOverlay(cunningMesh, sceneView.camera, cunningMesh.EditorWireOverlayColor, GetScaledLineWidth(UnityTexturedWireWidth));
+                    continue;
+                }
                 if (!shouldDraw) {
                     continue;
                 }
 
                 DrawNgonWireOverlay(cunningMesh, sceneView.camera, UnityTexturedWireColor, GetScaledLineWidth(UnityTexturedWireWidth));
             }
+        }
+
+        static bool HasExplicitWireDisplay(CunningMesh[] cunningMeshes) {
+            if (cunningMeshes == null) {
+                return false;
+            }
+
+            for (int index = 0; index < cunningMeshes.Length; index++) {
+                var cunningMesh = cunningMeshes[index];
+                if (cunningMesh != null && cunningMesh.EditorWantsWireOverlay) {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         static void ApplySceneViewWireAntiAliasing(Camera camera) {
@@ -213,10 +239,14 @@ namespace CunningEngine.Editor.Demos {
             var uv1 = new List<Vector4>(lines.Length * 2);
             var triangles = new List<int>(lines.Length * 3);
 
+            s_uniqueEdges.Clear();
             for (int lineIndex = 0; lineIndex + 1 < lines.Length; lineIndex += 2) {
                 int indexA = lines[lineIndex];
                 int indexB = lines[lineIndex + 1];
                 if ((uint)indexA >= (uint)sourceVertices.Length || (uint)indexB >= (uint)sourceVertices.Length || indexA == indexB) {
+                    continue;
+                }
+                if (!s_uniqueEdges.Add(EdgeKey(indexA, indexB))) {
                     continue;
                 }
 
@@ -248,6 +278,7 @@ namespace CunningEngine.Editor.Demos {
             }
 
             if (vertices.Count == 0) {
+                s_uniqueEdges.Clear();
                 return null;
             }
 
@@ -268,7 +299,14 @@ namespace CunningEngine.Editor.Demos {
             var bounds = sourceMesh.bounds;
             bounds.Expand(bounds.size.magnitude * 0.02f + 0.05f);
             overlayMesh.bounds = bounds;
+            s_uniqueEdges.Clear();
             return overlayMesh;
+        }
+
+        static ulong EdgeKey(int indexA, int indexB) {
+            uint a = (uint)Mathf.Min(indexA, indexB);
+            uint b = (uint)Mathf.Max(indexA, indexB);
+            return ((ulong)a << 32) | b;
         }
 
         static void CleanupDeadCaches() {
