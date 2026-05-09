@@ -350,6 +350,19 @@ namespace CunningEngine {
             Rgba32Float = 8,
         }
 
+        public enum CunningHostGpuOwnership : uint {
+            BorrowReadOnly = 0,
+            BorrowMutable = 1,
+            ImportShared = 2,
+            TransferOwnership = 3,
+        }
+
+        public enum CunningHostGpuResourceState : uint {
+            Unknown = 0,
+            ReadOnly = 1,
+            ReadWrite = 2,
+        }
+
         [StructLayout(LayoutKind.Sequential)]
         public struct CunningRuntimeCreateDesc {
             public uint backend_mode;
@@ -767,6 +780,9 @@ namespace CunningEngine {
 
         [DllImport(DLL_NAME, CallingConvention = CC)]
         public static extern ulong cunning_value_import_geometry(ulong ctx, ref CunningHostGeometryDesc desc);
+
+        [DllImport(DLL_NAME, CallingConvention = CC)]
+        public static extern ulong cunning_value_import_gpu_field(ulong ctx, ref CunningHostGpuImportFieldDesc desc);
 
         [DllImport(DLL_NAME, CallingConvention = CC)]
         public static extern CunningValueKind cunning_value_kind(ulong ctx, ulong value);

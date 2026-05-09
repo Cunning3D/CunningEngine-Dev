@@ -14,12 +14,12 @@ namespace CunningEngine {
         }
 
         public CDAAssetObject asset;
-        public List<MonoBehaviour> inputs = new();
+        public List<UnityEngine.Object> inputs = new();
         public bool autoCook = true;
         public bool cookInEditMode = true;
         public bool cookInPlayMode = true;
         public bool enableInstancing = true;
-        public CunningCdaGpuBackendMode gpuBackendMode = CunningCdaGpuBackendMode.StandaloneWgpuBackend;
+        public CunningCdaGpuBackendMode gpuBackendMode = CunningCdaGpuBackendMode.EngineHostedBackend;
         public Vector3 defaultTerrainSize = new Vector3(1000f, 256f, 1000f);
         public ulong cpuDeadlineNs = 4_000_000;
         public ulong gpuDeadlineNs = 4_000_000;
@@ -191,7 +191,10 @@ namespace CunningEngine {
             if (cdaId == 0) return;
             CancelJob();
             ReleaseInputValues();
-            ImportInputValues();
+            if (!ImportInputValues()) {
+                cookQueued = false;
+                return;
+            }
             generation++;
             var json = BuildParamsJson();
             jobId = NativeMethods.cunning_cda_submit_values(runtime.Handle, cdaId, instanceId, generation, json, inputValues.ToArray(), (uint)inputValues.Count);
@@ -281,7 +284,16 @@ namespace CunningEngine {
                     paramValues[p.name] = CdaParamValue.FromDefaultJson(p.default_value_json);
                 }
             }
+            EnsureInputSlotCount();
             cookQueued = true;
+        }
+
+        void EnsureInputSlotCount() {
+            int inputCount = asset != null && asset.inputs != null ? asset.inputs.Count : 0;
+            while (inputs.Count < inputCount) inputs.Add(null);
+            if (inputs.Count > inputCount) inputs.RemoveRange(inputCount, inputs.Count - inputCount);
+            while (lastInputDirty.Count < inputs.Count) lastInputDirty.Add(0);
+            if (lastInputDirty.Count > inputs.Count) lastInputDirty.RemoveRange(inputs.Count, lastInputDirty.Count - inputs.Count);
         }
 
         uint AssetSignature() {
@@ -310,22 +322,38 @@ namespace CunningEngine {
         }
 
         void SyncInputDirtyCache() {
+            EnsureInputSlotCount();
             lastInputDirty.Clear();
             for (int i = 0; i < inputs.Count; i++) lastInputDirty.Add(0);
         }
 
         bool InputsChanged() {
-            while (lastInputDirty.Count < inputs.Count) lastInputDirty.Add(0);
+            EnsureInputSlotCount();
             var changed = false;
             for (int i = 0; i < inputs.Count; i++) {
-                var h = GetInputHandleSafe(inputs[i]);
-                var d = h != 0 ? NativeMethods.cunning_geo_get_dirty_id(h) : 0;
+                var d = GetInputDirtySafe(inputs[i]);
                 if (d != lastInputDirty[i]) {
                     lastInputDirty[i] = d;
                     changed = true;
                 }
             }
             return changed;
+        }
+
+        static MonoBehaviour ResolveInputBehaviour(UnityEngine.Object obj) {
+            if (obj == null) return null;
+            return CunningInputUtility.Resolve(obj);
+        }
+
+        static ulong GetInputDirtySafe(UnityEngine.Object obj) {
+            var mb = ResolveInputBehaviour(obj);
+            if (mb == null) return 0;
+            try {
+                var valueProvider = ResolveInputValueProvider(mb);
+                if (valueProvider != null) return valueProvider.CurrentInputDirtyId;
+                var handle = GetInputHandleSafe(mb);
+                return handle != 0 ? NativeMethods.cunning_geo_get_dirty_id(handle) : 0;
+            } catch { return 0; }
         }
 
         static ulong GetInputHandleSafe(MonoBehaviour mb) {
@@ -337,14 +365,49 @@ namespace CunningEngine {
             } catch { return 0; }
         }
 
-        void ImportInputValues() {
+        bool ImportInputValues() {
+            EnsureInputSlotCount();
             for (int i = 0; i < inputs.Count; i++) {
-                var handle = GetInputHandleSafe(inputs[i]);
-                if (handle == 0) continue;
+                var resolved = ResolveInputBehaviour(inputs[i]);
+                if (TryImportInputValue(resolved, i, out var importedValue)) {
+                    inputValues.Add(importedValue);
+                    continue;
+                }
+                if (InputIsValueProvider(resolved)) return false;
+                var handle = GetInputHandleSafe(resolved);
+                var releaseEmptyHandle = false;
+                if (handle == 0) {
+                    handle = NativeMethods.cunning_geo_create();
+                    releaseEmptyHandle = handle != 0;
+                }
+                if (handle == 0) return false;
                 var desc = new NativeMethods.CunningHostGeometryDesc { handle = handle };
                 var value = NativeMethods.cunning_value_import_geometry(runtime.Handle, ref desc);
-                if (value != 0) inputValues.Add(value);
+                if (releaseEmptyHandle) NativeMethods.cunning_release_handle(handle);
+                if (value == 0) return false;
+                inputValues.Add(value);
             }
+            return true;
+        }
+
+        bool TryImportInputValue(MonoBehaviour mb, int index, out ulong value) {
+            value = 0;
+            var provider = ResolveInputValueProvider(mb);
+            if (provider == null) return false;
+            value = provider.ImportCunningValue(runtime);
+            if (value == 0) {
+                lastStatus = $"input {index} value import failed: {runtime.LastError()}";
+                return false;
+            }
+            return true;
+        }
+
+        static bool InputIsValueProvider(MonoBehaviour mb) => ResolveInputValueProvider(mb) != null;
+
+        static ICunningInputValueHandle ResolveInputValueProvider(MonoBehaviour mb) {
+            if (mb == null) return null;
+            if (mb is ICunningInputValueHandle direct) return direct;
+            return mb.GetComponent<ICunningInputValueHandle>();
         }
 
         void ReleaseInputValues() {

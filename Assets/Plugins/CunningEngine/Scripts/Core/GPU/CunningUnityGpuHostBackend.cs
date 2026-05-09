@@ -36,6 +36,7 @@ namespace CunningEngine {
 
         sealed class FieldRecord {
             public ComputeBuffer buffer;
+            public Texture sourceTexture;
             public uint dimX;
             public uint dimY;
             public uint dimZ;
@@ -43,6 +44,9 @@ namespace CunningEngine {
             public int floatCount;
             public float[] initialData;
             public bool createAttempted;
+            public bool ownsBuffer;
+            public bool external;
+            public bool textureDirty;
         }
 
         readonly Dictionary<ulong, KernelRecord> kernels = new();
@@ -60,6 +64,9 @@ namespace CunningEngine {
         ulong nextResource = 1;
         ulong nextFence = 1;
         bool disposed;
+        static ComputeShader textureFieldCopyShader;
+        static int textureFieldCopyKernel = -1;
+        static bool textureFieldCopyShaderAttempted;
 
         public IntPtr CallbackTablePtr => callbackTablePtr;
 
@@ -114,6 +121,83 @@ namespace CunningEngine {
                     Status = NativeMethods.CunningStatus.Unsupported;
                 } finally {
                     Done = true;
+                }
+            }
+        }
+
+        public ulong RegisterExternalField(ComputeBuffer buffer, uint dimX, uint dimY, uint dimZ, uint strideF32) {
+            if (buffer == null || dimX == 0 || dimY == 0 || dimZ == 0 || strideF32 == 0) return 0;
+            ulong required = checked((ulong)dimX * dimY * dimZ * strideF32);
+            if ((ulong)buffer.count < required) return 0;
+            ulong handle;
+            lock (mainThreadGate) {
+                handle = nextResource++;
+                fields[handle] = new FieldRecord {
+                    buffer = buffer,
+                    dimX = dimX,
+                    dimY = dimY,
+                    dimZ = dimZ,
+                    strideF32 = strideF32,
+                    floatCount = buffer.count,
+                    createAttempted = true,
+                    ownsBuffer = false,
+                    external = true,
+                };
+            }
+            return handle;
+        }
+
+        public ulong RegisterExternalTextureField(Texture texture, uint dimX, uint dimY, uint dimZ, uint strideF32) {
+            if (texture == null || dimX == 0 || dimY == 0 || dimZ != 1 || strideF32 != 1) return 0;
+            var floatCount = checked((int)((ulong)dimX * dimY * dimZ * strideF32));
+            ulong handle;
+            lock (mainThreadGate) {
+                handle = nextResource++;
+                fields[handle] = new FieldRecord {
+                    sourceTexture = texture,
+                    dimX = dimX,
+                    dimY = dimY,
+                    dimZ = dimZ,
+                    strideF32 = strideF32,
+                    floatCount = floatCount,
+                    ownsBuffer = true,
+                    external = true,
+                    textureDirty = true,
+                };
+            }
+            return handle;
+        }
+
+        public bool UpdateExternalTextureField(ulong handle, Texture texture, uint dimX, uint dimY, uint dimZ, uint strideF32) {
+            if (handle == 0 || texture == null || dimX == 0 || dimY == 0 || dimZ != 1 || strideF32 != 1) return false;
+            var floatCount = checked((int)((ulong)dimX * dimY * dimZ * strideF32));
+            lock (mainThreadGate) {
+                if (!fields.TryGetValue(handle, out var field) || !field.external) return false;
+                bool changedKind = field.sourceTexture == null || !field.ownsBuffer;
+                bool resized = field.dimX != dimX || field.dimY != dimY || field.dimZ != dimZ || field.strideF32 != strideF32 || field.floatCount != floatCount;
+                if (changedKind || resized) {
+                    if (field.ownsBuffer) field.buffer?.Dispose();
+                    field.buffer = null;
+                    field.createAttempted = false;
+                }
+                field.sourceTexture = texture;
+                field.dimX = dimX;
+                field.dimY = dimY;
+                field.dimZ = dimZ;
+                field.strideF32 = strideF32;
+                field.floatCount = floatCount;
+                field.ownsBuffer = true;
+                field.textureDirty = true;
+            }
+            return true;
+        }
+
+        public void UnregisterExternalField(ulong handle) {
+            if (handle == 0) return;
+            lock (mainThreadGate) {
+                if (fields.TryGetValue(handle, out var field) && field.external) {
+                    if (field.ownsBuffer) field.buffer?.Dispose();
+                    fields.Remove(handle);
                 }
             }
         }
@@ -301,6 +385,7 @@ namespace CunningEngine {
                         strideF32 = stride,
                         floatCount = floatCount,
                         initialData = initial,
+                        ownsBuffer = true,
                     };
                 }
                 Marshal.WriteInt64(outHandle, unchecked((long)handle));
@@ -500,7 +585,26 @@ namespace CunningEngine {
         static NativeMethods.CunningStatus ResourceNoop(IntPtr userData, IntPtr desc) => NativeMethods.CunningStatus.Ok;
 
         static NativeMethods.CunningStatus ImportBuffer(IntPtr userData, IntPtr desc, IntPtr outHandle) => NativeMethods.CunningStatus.Unsupported;
-        static NativeMethods.CunningStatus ImportField(IntPtr userData, IntPtr desc, IntPtr outHandle) => NativeMethods.CunningStatus.Unsupported;
+        static NativeMethods.CunningStatus ImportField(IntPtr userData, IntPtr descPtr, IntPtr outHandle) {
+            var self = Self(userData);
+            try {
+                if (descPtr == IntPtr.Zero || outHandle == IntPtr.Zero) return NativeMethods.CunningStatus.InvalidArgument;
+                var desc = Marshal.PtrToStructure<NativeMethods.CunningHostGpuImportFieldDesc>(descPtr);
+                FieldRecord field;
+                lock (self.mainThreadGate) {
+                    if (!self.fields.TryGetValue(desc.host_resource, out field)) return NativeMethods.CunningStatus.InvalidArgument;
+                }
+                if (field == null || (field.buffer == null && field.sourceTexture == null)) return NativeMethods.CunningStatus.InvalidArgument;
+                if (field.dimX != desc.dim_x || field.dimY != desc.dim_y || field.dimZ != Math.Max(1u, desc.dim_z)) {
+                    return NativeMethods.CunningStatus.InvalidArgument;
+                }
+                Marshal.WriteInt64(outHandle, unchecked((long)desc.host_resource));
+                return NativeMethods.CunningStatus.Ok;
+            } catch (Exception e) {
+                Debug.LogError("Cunning Unity GPU import_field failed: " + e);
+                return NativeMethods.CunningStatus.Unsupported;
+            }
+        }
         static NativeMethods.CunningStatus RecordIntoHost(IntPtr userData, IntPtr desc, IntPtr outFence) => NativeMethods.CunningStatus.Unsupported;
 
         static NativeMethods.CunningStatus ExportBuffer(IntPtr userData, ulong handle, IntPtr desc, IntPtr outExport) {
@@ -574,6 +678,7 @@ namespace CunningEngine {
         }
 
         bool EnsureFieldBuffer(FieldRecord record) {
+            if (record.sourceTexture != null) return EnsureTextureFieldBuffer(record);
             if (record.buffer != null) return true;
             if (record.createAttempted) return false;
             record.createAttempted = true;
@@ -582,6 +687,25 @@ namespace CunningEngine {
                 record.buffer.SetData(record.initialData);
                 record.initialData = null;
             }
+            return true;
+        }
+
+        bool EnsureTextureFieldBuffer(FieldRecord record) {
+            if (record.sourceTexture == null) return false;
+            if (record.buffer == null) {
+                record.buffer = new ComputeBuffer(record.floatCount, sizeof(float), ComputeBufferType.Structured);
+                record.createAttempted = true;
+                record.textureDirty = true;
+            }
+            if (!record.textureDirty) return true;
+            if (!EnsureTextureFieldCopyShader(out var shader, out var kernel)) return false;
+            shader.SetTexture(kernel, "_CunningSource", record.sourceTexture);
+            shader.SetBuffer(kernel, "_CunningDst", record.buffer);
+            shader.SetInt("_CunningWidth", checked((int)record.dimX));
+            shader.SetInt("_CunningHeight", checked((int)record.dimY));
+            shader.SetInt("_CunningStride", checked((int)record.strideF32));
+            shader.Dispatch(kernel, Mathf.CeilToInt(record.dimX / 8f), Mathf.CeilToInt(record.dimY / 8f), 1);
+            record.textureDirty = false;
             return true;
         }
 
@@ -651,6 +775,33 @@ namespace CunningEngine {
             return ptr == IntPtr.Zero ? fallback : (Marshal.PtrToStringAnsi(ptr) ?? fallback);
         }
 
+        const string TextureFieldCopyEntry = "CunningCopyHeightmap";
+        const string TextureFieldCopySource = @"
+Texture2D<float4> _CunningSource;
+RWStructuredBuffer<float> _CunningDst;
+int _CunningWidth;
+int _CunningHeight;
+int _CunningStride;
+
+[numthreads(8, 8, 1)]
+void CunningCopyHeightmap(uint3 id : SV_DispatchThreadID) {
+    if (id.x >= (uint)_CunningWidth || id.y >= (uint)_CunningHeight) return;
+    uint index = (id.y * (uint)_CunningWidth + id.x) * (uint)_CunningStride;
+    _CunningDst[index] = _CunningSource.Load(int3(int2(id.xy), 0)).r;
+}
+";
+
+        static bool EnsureTextureFieldCopyShader(out ComputeShader shader, out int kernel) {
+            if (textureFieldCopyShader == null && !textureFieldCopyShaderAttempted) {
+                textureFieldCopyShaderAttempted = true;
+                textureFieldCopyShader = LoadOrCreateComputeShader("cunning_texture_field_copy", TextureFieldCopyEntry, TextureFieldCopySource);
+                if (textureFieldCopyShader != null) textureFieldCopyKernel = textureFieldCopyShader.FindKernel(TextureFieldCopyEntry);
+            }
+            shader = textureFieldCopyShader;
+            kernel = textureFieldCopyKernel;
+            return shader != null && kernel >= 0;
+        }
+
         static ComputeShader LoadOrCreateComputeShader(string label, string entry, string source) {
 #if UNITY_EDITOR
             source = NormalizeUnityComputeSource(source);
@@ -690,7 +841,7 @@ namespace CunningEngine {
             disposed = true;
             PumpMainThreadWork();
             if (Thread.CurrentThread.ManagedThreadId == mainThreadId) {
-                foreach (var field in fields.Values) field.buffer?.Dispose();
+                foreach (var field in fields.Values) if (field.ownsBuffer) field.buffer?.Dispose();
                 foreach (var buffer in buffers.Values) buffer.buffer?.Dispose();
                 fields.Clear();
                 buffers.Clear();

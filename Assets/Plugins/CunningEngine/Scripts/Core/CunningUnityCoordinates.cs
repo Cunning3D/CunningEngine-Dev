@@ -14,6 +14,14 @@ namespace CunningEngine {
             return new Vector3(value.x, value.y, -value.z);
         }
 
+        internal static Vector3 ToCunningPosition(Vector3 value) {
+            return new Vector3(value.x, value.y, -value.z);
+        }
+
+        internal static Vector3 ToCunningDirection(Vector3 value) {
+            return new Vector3(value.x, value.y, -value.z);
+        }
+
         internal static Quaternion ToUnityRotation(Quaternion value) {
             var mapped = new Quaternion(-value.x, -value.y, value.z, value.w);
             var lenSq = mapped.x * mapped.x + mapped.y * mapped.y + mapped.z * mapped.z + mapped.w * mapped.w;

@@ -68,6 +68,41 @@ namespace CunningEngine {
             hostGpuBackend?.PumpMainThreadWork();
         }
 
+        public bool SupportsExternalGpuFieldImport => hostGpuBackend != null;
+
+        public ulong ImportExternalGpuField(ComputeBuffer buffer, ref ulong hostFieldHandle, ref NativeMethods.CunningHostGpuImportFieldDesc desc) {
+            if (Handle == 0 || hostGpuBackend == null || buffer == null) return 0;
+            hostGpuBackend.PumpMainThreadWork();
+            if (hostFieldHandle == 0) {
+                hostFieldHandle = hostGpuBackend.RegisterExternalField(buffer, desc.dim_x, desc.dim_y, Math.Max(1u, desc.dim_z), Math.Max(1u, desc.layer_count));
+            }
+            if (hostFieldHandle == 0) return 0;
+            desc.host_resource = hostFieldHandle;
+            return NativeMethods.cunning_value_import_gpu_field(Handle, ref desc);
+        }
+
+        public ulong ImportExternalGpuField(Texture texture, ref ulong hostFieldHandle, ref NativeMethods.CunningHostGpuImportFieldDesc desc) {
+            if (Handle == 0 || hostGpuBackend == null || texture == null) return 0;
+            hostGpuBackend.PumpMainThreadWork();
+            var dimZ = Math.Max(1u, desc.dim_z);
+            var stride = Math.Max(1u, desc.layer_count);
+            if (hostFieldHandle == 0) {
+                hostFieldHandle = hostGpuBackend.RegisterExternalTextureField(texture, desc.dim_x, desc.dim_y, dimZ, stride);
+            } else if (!hostGpuBackend.UpdateExternalTextureField(hostFieldHandle, texture, desc.dim_x, desc.dim_y, dimZ, stride)) {
+                hostGpuBackend.UnregisterExternalField(hostFieldHandle);
+                hostFieldHandle = hostGpuBackend.RegisterExternalTextureField(texture, desc.dim_x, desc.dim_y, dimZ, stride);
+            }
+            if (hostFieldHandle == 0) return 0;
+            desc.host_resource = hostFieldHandle;
+            return NativeMethods.cunning_value_import_gpu_field(Handle, ref desc);
+        }
+
+        public void UnregisterExternalGpuField(ref ulong hostFieldHandle) {
+            if (hostFieldHandle == 0) return;
+            hostGpuBackend?.UnregisterExternalField(hostFieldHandle);
+            hostFieldHandle = 0;
+        }
+
         public void ReleaseValue(ref ulong value) {
             if (Handle != 0 && value != 0) NativeMethods.cunning_value_release(Handle, value);
             value = 0;

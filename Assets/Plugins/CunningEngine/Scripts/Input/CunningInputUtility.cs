@@ -14,6 +14,8 @@ namespace CunningEngine {
             if (_initialized) return;
             _initialized = true;
             Register(new PolylineInputResolver());
+            Register(new HeightmapTextureInputResolver());
+            Register(new TerrainInputResolver());
             Register(new CunningMeshInputResolver());
             Register(new UnityMeshInputResolver());
             Register(new SplineInputResolver());
@@ -27,11 +29,11 @@ namespace CunningEngine {
 
         public static MonoBehaviour Resolve(Object obj) {
             Ensure();
-            if (obj is MonoBehaviour mb && mb is ICunningInputHandle) return mb;
+            if (obj is MonoBehaviour mb && (mb is ICunningInputHandle || mb is ICunningInputValueHandle)) return mb;
             foreach (var r in R) if (r.CanResolve(obj)) return r.Resolve(obj);
             return null;
         }
 
-        public static string GetSupportedTypesHint() => "Supported: GameObject with ICunningPolylineSource, CunningMesh, MeshFilter, SkinnedMeshRenderer, or SplineContainer.";
+        public static string GetSupportedTypesHint() => "Supported: Terrain, GameObject with Terrain, ICunningPolylineSource, CunningMesh, MeshFilter, SkinnedMeshRenderer, or SplineContainer.";
     }
 }
